@@ -11,6 +11,7 @@ import json
 import locale
 import os
 import re
+import subprocess
 import sys
 import textwrap
 import unicodedata
@@ -148,6 +149,44 @@ def filter_rows(rows, query, project=None):
         if all(t in hay for t in terms):
             out.append(r)
     return out
+
+
+MODES = ("local", "crons", "agents")
+
+
+def load_agents(timeout=5):
+    """Background agents from `claude agents --json --all`, keyed by session id.
+
+    Interactive sessions are not agents. Any failure (no claude, old version,
+    bad output) just means no agents.
+    """
+    try:
+        out = subprocess.run(["claude", "agents", "--json", "--all"], capture_output=True,
+                             text=True, timeout=timeout, check=True).stdout
+        data = json.loads(out)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {}
+    if not isinstance(data, list):
+        return {}
+    return {a["sessionId"]: a for a in data
+            if isinstance(a, dict) and a.get("sessionId") and a.get("kind") != "interactive"}
+
+
+def is_alive(agent):
+    """True if the agent's process is still running."""
+    try:
+        os.kill(int(agent["pid"]), 0)
+    except (KeyError, TypeError, ValueError, OSError):
+        return False
+    return True
+
+
+def mode_rows(sessions, mode):
+    """Sessions shown in a Tab view: local (default), crons (sdk-cli), agents (background)."""
+    if mode == "agents":
+        return [s for s in sessions if s.get("agent")]
+    crons = mode == "crons"
+    return [s for s in sessions if not s.get("agent") and (s["entrypoint"] == "sdk-cli") == crons]
 
 
 # ---------------------------------------------------------------- projects
@@ -300,7 +339,7 @@ def fit(text, width):
     return text + " " * (width - disp_width(text))
 
 
-HELP = "↑↓/jk move · / search · p project · x clear filters · Tab crons · Enter resume · q quit"
+HELP = "↑↓/jk move · / search · p project (type to filter) · x clear filters · Tab local/crons/agents · Enter resume · q quit"
 HELP_SEARCH = "type to filter · ↑↓ move · Enter accept · Esc cancel"
 
 
@@ -315,39 +354,60 @@ def put(win, y, x, text, attr=0):
 
 
 def pick_project(stdscr, rows, current):
-    """Popup with the distinct projects. Returns the chosen one, None = all, False = cancelled."""
-    items = [(None, len(rows))] + project_list(rows)
-    sel = next((i for i, (p, _) in enumerate(items) if p == current), 0)
+    """Popup with the distinct projects, filtered as you type.
+
+    Returns the chosen one, None = all, False = cancelled.
+    """
+    all_items = [(None, len(rows))] + project_list(rows)
     h, w = stdscr.getmaxyx()
-    labels = ["   (all)" if p is None else f"{project_emoji(p)} {p}" for p, _ in items]
-    pw = min(w - 4, max(30, max(disp_width(l) for l in labels) + 10))
-    ph = min(h - 2, len(items) + 2)
+
+    def label(p):
+        return "   (all)" if p is None else f"{project_emoji(p)} {p}"
+
+    pw = min(w - 4, max(30, max(disp_width(label(p)) for p, _ in all_items) + 10))
+    ph = min(h - 2, len(all_items) + 3)
     win = curses.newwin(ph, pw, (h - ph) // 2, (w - pw) // 2)
     win.keypad(True)
+    text = ""
+    items = all_items
+    sel = next((i for i, (p, _) in enumerate(items) if p == current), 0)
     top = 0
     while True:
-        vis = ph - 2
+        items = [it for it in all_items if it[0] and text.lower() in it[0].lower()] \
+            if text else all_items
+        sel = max(0, min(sel, len(items) - 1))
+        vis = ph - 3
         top = min(max(top, sel - vis + 1), sel)
         win.erase()
         win.box()
         put(win, 0, 2, " Project ", curses.A_BOLD)
-        for i, (label, (_, n)) in enumerate(list(zip(labels, items))[top:top + vis]):
+        put(win, 1, 1, f" > {text}_", curses.color_pair(3))
+        for i, (p, n) in enumerate(items[top:top + vis]):
             attr = curses.color_pair(1) if top + i == sel else curses.A_NORMAL
-            win.addstr(1 + i, 1, fit(f" {label}", pw - 8) + f"{n:>5} ", attr)
+            put(win, 2 + i, 1, fit(f" {label(p)}", pw - 8) + f"{n:>5} ", attr)
         win.refresh()
         k = win.get_wch()
-        if k in (curses.KEY_UP, "k"):
-            sel = max(0, sel - 1)
-        elif k in (curses.KEY_DOWN, "j"):
-            sel = min(len(items) - 1, sel + 1)
+        if k in (curses.KEY_UP, "\x10"):
+            sel -= 1
+        elif k in (curses.KEY_DOWN, "\x0e"):
+            sel += 1
         elif k == curses.KEY_PPAGE:
-            sel = max(0, sel - vis)
+            sel -= vis
         elif k == curses.KEY_NPAGE:
-            sel = min(len(items) - 1, sel + vis)
+            sel += vis
         elif k in ("\n", "\r", curses.KEY_ENTER):
-            return items[sel][0]
-        elif k in ("\x1b", "q", "p"):
-            return False
+            if items:
+                return items[sel][0]
+        elif k == "\x1b":
+            if not text:
+                return False
+            text, sel = "", 0
+        elif k in (curses.KEY_BACKSPACE, "\x7f", "\b"):
+            text, sel = text[:-1], 0
+        elif k == "\x15":                         # Ctrl-U
+            text, sel = "", 0
+        elif isinstance(k, str) and k.isprintable():
+            text, sel = text + k, 0
 
 
 def run_ui(stdscr, sessions, query, project=None):
@@ -356,13 +416,13 @@ def run_ui(stdscr, sessions, query, project=None):
     curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_CYAN)   # selection
     curses.init_pair(2, curses.COLOR_CYAN, -1)                   # header
     curses.init_pair(3, curses.COLOR_YELLOW, -1)                 # warning / filters
-    show_all = False
+    mode = 0
     searching = False
     saved_query = ""
     sel = top = 0
     msg = ""
     while True:
-        base = sessions if show_all else [s for s in sessions if s["entrypoint"] != "sdk-cli"]
+        base = mode_rows(sessions, MODES[mode])
         rows = filter_rows(base, query, project)
         h, w = stdscr.getmaxyx()
         detail_h = 5
@@ -389,14 +449,15 @@ def run_ui(stdscr, sessions, query, project=None):
         if project:
             filters.append(f"{project_emoji(project)} {project}")
         head = "  ".join(filters) or "ccs"
-        info = f"{len(rows)}/{len(base)} sessions{'  (incl. crons)' if show_all else ''}"
+        info = f"{len(rows)}/{len(base)} {MODES[mode]}"
         gap = w - 1 - disp_width(head) - len(info)
         put(stdscr, 0, 0, head + " " * gap + info if gap >= 2 else head,
             curses.A_BOLD | (curses.color_pair(3) if filters else 0))
         put(stdscr, 1, 0, line(["PROJECT", "SESSION", "DESCRIPTION", "CREATED", "UPDATED"]),
             curses.color_pair(2) | curses.A_BOLD)
         for i, r in enumerate(rows[top:top + list_h]):
-            cells = [f"{project_emoji(r['project'])} {r['project']}", r["title"] or r["id"][:8],
+            live = "● " if r["agent"] and is_alive(r["agent"]) else ""
+            cells = [f"{project_emoji(r['project'])} {r['project']}", live + (r["title"] or r["id"][:8]),
                      r["first"], rel_time(r["created"]), rel_time(r["updated"])]
             attr = curses.color_pair(1) if top + i == sel else curses.A_NORMAL
             put(stdscr, 2 + i, 0, line(cells), attr)
@@ -465,7 +526,7 @@ def run_ui(stdscr, sessions, query, project=None):
         elif k == "x":
             query, project, sel = "", None, 0
         elif k == "\t":
-            show_all, sel = not show_all, 0
+            mode, sel = (mode + 1) % len(MODES), 0
         elif k in ("q", "\x1b"):
             return None
         elif k in ("\n", "\r", curses.KEY_ENTER):
@@ -501,6 +562,9 @@ def main(argv):
     sys.stderr.write("\r\033[K")
     for s in sessions:
         s["project"] = project_key(s["cwd"])
+    agents = load_agents()
+    for s in sessions:
+        s["agent"] = agents.get(s["id"])
     if not sessions:
         print("No sessions found in", PROJECTS_DIR)
         return 1
@@ -508,9 +572,12 @@ def main(argv):
     chosen = curses.wrapper(run_ui, sessions, query, project)
     if not chosen:
         return 0
-    print(f"→ {short_path(chosen['cwd'])}  ·  claude --resume {chosen['id']}")
+    cmd = ["claude", "--resume", chosen["id"]]
+    if chosen["agent"] and is_alive(chosen["agent"]):
+        cmd = ["claude", "attach", chosen["id"]]
+    print(f"→ {short_path(chosen['cwd'])}  ·  {' '.join(cmd)}")
     os.chdir(chosen["cwd"])
-    os.execvp("claude", ["claude", "--resume", chosen["id"]])
+    os.execvp("claude", cmd)
 
 
 def cli():

@@ -64,9 +64,9 @@ Teclas:
 |---|---|
 | `↑↓` `j k` `PgUp PgDn` `g G` | mover |
 | `/` | búsqueda de texto libre (Enter acepta, Esc cancela) |
-| `p` | popup de proyectos (↑↓ + Enter, Esc cierra) |
+| `p` | popup de proyectos: escribe para filtrar, ↑↓ + Enter, Esc limpia/cierra |
 | `x` | limpiar filtros |
-| `Tab` | mostrar/ocultar sesiones `sdk-cli` (crons, `claude -p`) |
+| `Tab` | rota local → crons (`sdk-cli`, `claude -p`) → agentes en segundo plano (`claude agents`; `●` = activo, Enter hace attach) |
 | `Enter` | `cd` a la carpeta + `claude --resume <id>` |
 | `q` / `Esc` | salir |
 

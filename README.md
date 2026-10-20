@@ -46,9 +46,9 @@ ln -sf "$PWD/ccs.py" ~/.local/bin/ccs
 |---|---|
 | `↑↓` `j k` `PgUp PgDn` `g G` | move |
 | `/` | free-text search (Enter accepts, Esc cancels) |
-| `p` | project picker (↑↓ + Enter, Esc closes) |
+| `p` | project picker: type to filter, ↑↓ + Enter, Esc clears/closes |
 | `x` | clear filters |
-| `Tab` | show/hide `sdk-cli` sessions (cron jobs, `claude -p`) |
+| `Tab` | cycle local → crons (`sdk-cli`, `claude -p`) → background agents (`claude agents`; `●` = running, Enter attaches) |
 | `Enter` | `cd` to the folder + `claude --resume <id>` |
 | `q` / `Esc` | quit |
 

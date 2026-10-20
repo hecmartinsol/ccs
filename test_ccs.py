@@ -269,6 +269,45 @@ class ProjectFilterTest(unittest.TestCase):
         self.assertEqual(ccs.project_list(rows), [("cash", 1), ("shop", 2)])
 
 
+class ModeRowsTest(unittest.TestCase):
+    S = [
+        {"id": "a", "entrypoint": "cli", "agent": None},
+        {"id": "b", "entrypoint": "sdk-cli", "agent": None},
+        {"id": "c", "entrypoint": "cli", "agent": {"pid": 1, "kind": "bg"}},
+    ]
+
+    def ids(self, mode):
+        return [s["id"] for s in ccs.mode_rows(self.S, mode)]
+
+    def test_views_partition_sessions(self):
+        self.assertEqual(self.ids("local"), ["a"])
+        self.assertEqual(self.ids("crons"), ["b"])
+        self.assertEqual(self.ids("agents"), ["c"])
+
+
+class AgentsTest(unittest.TestCase):
+    def run_agents(self, out):
+        with mock.patch.object(ccs.subprocess, "run") as run:
+            run.return_value.stdout = out
+            return ccs.load_agents()
+
+    def test_skips_interactive(self):
+        out = json.dumps([{"sessionId": "i", "kind": "interactive"},
+                          {"sessionId": "b", "kind": "bg", "pid": 1}])
+        self.assertEqual(list(self.run_agents(out)), ["b"])
+
+    def test_bad_output_means_no_agents(self):
+        self.assertEqual(self.run_agents("not json"), {})
+
+    def test_missing_claude(self):
+        with mock.patch.object(ccs.subprocess, "run", side_effect=FileNotFoundError):
+            self.assertEqual(ccs.load_agents(), {})
+
+    def test_is_alive(self):
+        self.assertTrue(ccs.is_alive({"pid": os.getpid()}))
+        self.assertFalse(ccs.is_alive({}))
+
+
 class CliTest(unittest.TestCase):
     def test_version_flag_prints_version(self):
         out = io.StringIO()
