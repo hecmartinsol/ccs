@@ -32,7 +32,7 @@ SESSIONS_DIR = os.path.expanduser("~/.claude/sessions")
 TRASH_DIR = os.path.join(
     os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")), "ccs", "trash"
 )
-CACHE_VERSION = 3
+CACHE_VERSION = 4
 REFRESH_SECS = 30
 MAX_TEXT = 300
 
@@ -107,8 +107,10 @@ def read_preview(path, limit=100, max_chars=1500):
 def parse_session(path):
     """Extract metadata from a session .jsonl. None if it has no real prompts."""
     s = {"id": os.path.basename(path)[:-len(".jsonl")], "title": "", "first": "", "last": "",
-         "cwd": "", "created": "", "updated": "", "entrypoint": "", "prompts": 0}
+         "cwd": "", "created": "", "updated": "", "entrypoint": "", "prompts": 0,
+         "branch": "", "model": "", "usage": {}}
     ai_title = custom_title = ""
+    by_msg = {}                         # message id -> (model, tokens): a message spans several records
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             try:
@@ -130,6 +132,18 @@ def parse_session(path):
                     s["updated"] = ts
             if not s["cwd"] and rec.get("cwd"):
                 s["cwd"] = rec["cwd"]
+            if rec.get("gitBranch"):
+                s["branch"] = rec["gitBranch"]
+            if t == "assistant":
+                msg = rec.get("message") or {}
+                u, model = msg.get("usage"), msg.get("model")
+                if isinstance(u, dict) and model and model != "<synthetic>":
+                    cw = u.get("cache_creation_input_tokens") or 0
+                    cw1 = min(cw, (u.get("cache_creation") or {}).get("ephemeral_1h_input_tokens") or 0)
+                    by_msg[msg.get("id") or rec.get("uuid")] = (model, [
+                        u.get("input_tokens") or 0, u.get("output_tokens") or 0,
+                        u.get("cache_read_input_tokens") or 0, cw - cw1, cw1])
+                    s["model"] = model
             # a session launched by the SDK and resumed by hand counts as interactive
             ep = rec.get("entrypoint")
             if ep and (not s["entrypoint"] or ep == "cli"):
@@ -143,6 +157,10 @@ def parse_session(path):
     if not s["prompts"]:
         return None
     s["title"] = custom_title or ai_title
+    for model, toks in by_msg.values():
+        tot = s["usage"].setdefault(model, [0] * 5)
+        for i, n in enumerate(toks):
+            tot[i] += n
     return s
 
 
@@ -203,7 +221,8 @@ def filter_rows(rows, query, project=None):
     for r in rows:
         if project and r.get("project") != project:
             continue
-        hay = " ".join((r["title"], r["first"], r["last"], r["cwd"], r["id"])).lower()
+        hay = " ".join((r["title"], r["first"], r["last"], r["cwd"], r["id"],
+                        r.get("branch", ""), r.get("model", ""))).lower()
         if all(t in hay for t in terms):
             out.append(r)
     return out
@@ -247,18 +266,127 @@ def mode_rows(sessions, mode):
     return [s for s in sessions if not s.get("agent") and (s["entrypoint"] == "sdk-cli") == crons]
 
 
-COLUMNS = ("PROJECT", "SESSION", "DESCRIPTION", "CREATED", "UPDATED")
-SORT_KEYS = (
-    lambda r: r["project"].lower(),
-    lambda r: (r["title"] or r["id"]).lower(),
-    lambda r: r["first"].lower(),
-    lambda r: r["created"],
-    lambda r: r["updated"],
-)
+# ---------------------------------------------------------------- usage and columns
+
+# $ per million tokens: (input, output, cache read). Cache writes are 1.25x input (5 min) or
+# 2x input (1 h). Estimates from Anthropic's public API prices; override with "prices" in the config.
+PRICES = {
+    "claude-fable-5-1": (10, 50, 0.25), "claude-fable-5": (10, 50, 0.25),
+    "claude-mythos-5-1": (10, 50, 0.25), "claude-mythos-5": (10, 50, 0.25),
+    "claude-opus-5-5": (4, 20, 0.20), "claude-opus-5": (5, 25, 0.50),
+    "claude-opus-4-8": (5, 25, 0.50), "claude-opus-4-7": (5, 25, 0.50),
+    "claude-opus-4-6": (5, 25, 0.50),
+    "claude-sonnet-5-5": (2, 10, 0.20), "claude-sonnet-5": (2, 10, 0.20),
+    "claude-sonnet-4-6": (3, 15, 0.30),
+    "claude-haiku-5-5": (0.10, 0.50, 0.01), "claude-haiku-4-5": (1, 5, 0.10),
+}
+USER_PRICES = {}
 
 
-def sort_rows(rows, col, desc):
-    return sorted(rows, key=SORT_KEYS[col], reverse=desc)
+def price_for(model):
+    """(input, output, cache read) $/MTok for a model id, or None if unknown."""
+    base = re.sub(r"(-\d{8}|@\d{8}|\[1m\])$", "", model)
+    for table in (USER_PRICES, PRICES):
+        if base in table:
+            return table[base]
+    return None
+
+
+def session_cost(s):
+    """Estimated $ of a session, or None when none of its models has a known price."""
+    total, known = 0.0, False
+    for model, (inp, out, cr, cw5, cw1) in s.get("usage", {}).items():
+        p = price_for(model)
+        if not p:
+            continue
+        known = True
+        total += (inp * p[0] + out * p[1] + cr * p[2] + cw5 * p[0] * 1.25 + cw1 * p[0] * 2) / 1e6
+    return total if known else None
+
+
+def session_tokens(s):
+    return sum(sum(v) for v in s.get("usage", {}).values())
+
+
+def session_secs(s):
+    try:
+        return int((parse_ts(s["updated"]) - parse_ts(s["created"])).total_seconds())
+    except (KeyError, ValueError):
+        return 0
+
+
+def fmt_tokens(n):
+    if n < 1000:
+        return str(n)
+    for div, unit in ((1e3, "k"), (1e6, "M"), (1e9, "G")):
+        if n < div * 1000 or unit == "G":
+            v = n / div
+            return f"{v:.1f}{unit}" if v < 100 else f"{v:.0f}{unit}"
+
+
+def fmt_cost(c):
+    if c is None:
+        return "—"
+    if c < 0.005:
+        return "<$0.01"
+    return f"${c:.2f}" if c < 10 else f"${c:.1f}" if c < 100 else f"${c:.0f}"
+
+
+def fmt_duration(secs):
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m"
+    if secs < 86400:
+        return f"{secs // 3600}h{secs % 3600 // 60:02d}m"
+    return f"{secs // 86400}d{secs % 86400 // 3600}h"
+
+
+def model_short(model):
+    return re.sub(r"^claude-", "", model)
+
+
+# key, title, width (fixed columns) or weight (flexible ones, width=None), cell text, sort key, default
+COLS = [
+    ("project", "PROJECT", None, lambda r: f"{project_emoji(r['project'])} {r['project']}",
+     lambda r: r["project"].lower(), True),
+    ("session", "SESSION", None, lambda r: r["title"] or r["id"][:8],
+     lambda r: (r["title"] or r["id"]).lower(), True),
+    ("branch", "BRANCH", 16, lambda r: r["branch"], lambda r: r["branch"].lower(), False),
+    ("model", "MODEL", 12, lambda r: model_short(r["model"]), lambda r: r["model"], False),
+    ("first", "DESCRIPTION", None, lambda r: r["first"], lambda r: r["first"].lower(), True),
+    ("turns", "TURNS", 5, lambda r: str(r["prompts"]), lambda r: r["prompts"], False),
+    ("tokens", "TOKENS", 7, lambda r: fmt_tokens(session_tokens(r)), session_tokens, False),
+    ("cost", "COST", 7, lambda r: fmt_cost(session_cost(r)), lambda r: session_cost(r) or 0, False),
+    ("duration", "DURATION", 8, lambda r: fmt_duration(session_secs(r)), session_secs, False),
+    ("created", "CREATED", 10, lambda r: rel_time(r["created"]), lambda r: r["created"], True),
+    ("updated", "UPDATED", 10, lambda r: rel_time(r["updated"]), lambda r: r["updated"], True),
+]
+COL = {c[0]: c for c in COLS}
+FLEX_WEIGHTS = {"project": 18, "session": 28, "first": 54}    # shares of the free width
+DEFAULT_COLUMNS = [c[0] for c in COLS if c[5]]
+VISIBLE = list(DEFAULT_COLUMNS)
+
+
+def column_widths(keys, total):
+    """Width of each visible column so the row fits in `total` cells (flexible ones share the rest)."""
+    fixed = sum(COL[k][2] for k in keys if COL[k][2])
+    free = max(0, total - fixed - (len(keys) - 1))
+    flex = [k for k in keys if not COL[k][2]]
+    weight = sum(FLEX_WEIGHTS[k] for k in flex)
+    width = {k: free * FLEX_WEIGHTS[k] // weight for k in flex} if weight else {}
+    if "project" in width and width["project"] > 24:      # project names are short: give the rest away
+        extra, width["project"] = width["project"] - 24, 24
+        others = [k for k in flex if k != "project"]
+        for i, k in enumerate(others):
+            width[k] += extra // len(others) + (extra % len(others) if i == 0 else 0)
+    if flex:
+        width[flex[-1]] += free - sum(width.values())       # rounding leftovers
+    return [COL[k][2] or width[k] for k in keys]
+
+
+def sort_rows(rows, key, desc):
+    return sorted(rows, key=COL[key][4], reverse=desc)
 
 
 def pin_favorites(rows):
@@ -415,9 +543,13 @@ def apply_config(cfg):
     """workspaces: folders whose top-level children are projects.
     emojis: {project: emoji}.  rules: [[substring, emoji], ...] (before the built-in ones).
     hidden: project-name patterns (fnmatch) to leave out.  favorites: session ids pinned on top.
-    terminal: command that runs the rest of its arguments, for Ctrl-J (e.g. "ghostty -e")."""
-    global WORKSPACES, EMOJIS, RULES, HIDDEN, FAVORITES, TERMINAL
+    terminal: command that runs the rest of its arguments, for Ctrl-J (e.g. "ghostty -e").
+    columns: visible column keys.  prices: {model: [input, output, cache read]} in $/MTok."""
+    global WORKSPACES, EMOJIS, RULES, HIDDEN, FAVORITES, TERMINAL, USER_PRICES
     TERMINAL = shlex.split(cfg.get("terminal") or "")
+    VISIBLE[:] = [k for k in COL if k in cfg.get("columns", DEFAULT_COLUMNS)] or list(DEFAULT_COLUMNS)
+    USER_PRICES = {m: tuple(p) for m, p in cfg.get("prices", {}).items()
+                   if isinstance(p, (list, tuple)) and len(p) == 3}
     HIDDEN = [str(p).lower() for p in cfg.get("hidden", [])]
     FAVORITES = [str(i) for i in cfg.get("favorites", [])]
     WORKSPACES = [os.path.expanduser(w).rstrip("/") for w in cfg.get("workspaces", [])]
@@ -528,7 +660,7 @@ def fit(text, width):
 
 
 HELP = [("↑↓", "move"), ("Enter", "resume"), ("Space", "preview"), ("^J", "window"), ("/", "search"),
-        ("s", "sort"), ("p", "project"), ("r", "rename"), ("d", "trash"), ("*", "pin"),
+        ("s", "sort"), ("c", "columns"), ("p", "project"), ("r", "rename"), ("d", "trash"), ("*", "pin"),
         ("^H", "hidden"), ("^R", "refresh"), ("x", "clear"), ("Tab", "view"), ("q", "quit")]
 HELP_SORT = [("←→", "column"), ("↑", "asc"), ("↓", "desc"), ("Enter/Esc/s", "done")]
 HELP_SEARCH = [("type", "to filter"), ("↑↓", "move"), ("Enter", "accept"), ("Esc", "cancel")]
@@ -686,18 +818,60 @@ def preview(stdscr, session):
         top = max(0, min(top, max_top))
 
 
+def columns_menu(stdscr):
+    """Popup to show/hide table columns. Saved as `columns` in the config. Returns a status message."""
+    h, w = stdscr.getmaxyx()
+    ph, pw = min(h - 2, len(COLS) + 3), min(w - 4, 34)
+    win = curses.newwin(ph, pw, (h - ph) // 2, (w - pw) // 2)
+    win.keypad(True)
+    sel, top = 0, 0
+    while True:
+        vis = ph - 3
+        top = min(max(top, sel - vis + 1), sel)
+        win.erase()
+        win.box()
+        put(win, 0, 2, " Columns ", curses.A_BOLD)
+        for i, (key, title, *_rest) in enumerate(COLS[top:top + vis]):
+            on = key in VISIBLE
+            attr = curses.color_pair(1) if top + i == sel else curses.A_NORMAL
+            put(win, 1 + i, 1, fit(f" [{'x' if on else ' '}] {title}", pw - 2), attr)
+        put(win, ph - 1, 2, " Space toggle · Esc close ", curses.A_DIM)
+        win.refresh()
+        k = win.get_wch()
+        if k in (curses.KEY_UP, "k", "\x10"):
+            sel = max(0, sel - 1)
+        elif k in (curses.KEY_DOWN, "j", "\x0e"):
+            sel = min(len(COLS) - 1, sel + 1)
+        elif k in (" ", "\n", "\r", curses.KEY_ENTER):
+            key = COLS[sel][0]
+            new = [c[0] for c in COLS if (c[0] in VISIBLE) != (c[0] == key)]
+            if not new:
+                continue                            # keep at least one column
+            VISIBLE[:] = new
+            try:
+                save_config({"columns": new})
+            except (OSError, SystemExit) as e:
+                return f"Config not saved: {e}"
+        elif k in ("\x1b", "q", "c"):
+            return ""
+
+
 def pick_project(stdscr, rows, current):
     """Popup with the distinct projects, filtered as you type.
 
     Returns the chosen one, None = all, False = cancelled.
     """
     all_items = [(None, len(rows))] + project_list(rows)
+    spent = {}
+    for r in rows:
+        spent[r["project"]] = spent.get(r["project"], 0) + (session_cost(r) or 0)
+    spent[None] = sum(spent.values())
     h, w = stdscr.getmaxyx()
 
     def label(p):
         return "   (all)" if p is None else f"{project_emoji(p)} {p}"
 
-    pw = min(w - 4, max(30, max(disp_width(label(p)) for p, _ in all_items) + 10))
+    pw = min(w - 4, max(38, max(disp_width(label(p)) for p, _ in all_items) + 18))
     ph = min(h - 2, len(all_items) + 3)
     win = curses.newwin(ph, pw, (h - ph) // 2, (w - pw) // 2)
     win.keypad(True)
@@ -717,7 +891,7 @@ def pick_project(stdscr, rows, current):
         put(win, 1, 1, f" > {text}_", curses.color_pair(3))
         for i, (p, n) in enumerate(items[top:top + vis]):
             attr = curses.color_pair(1) if top + i == sel else curses.A_NORMAL
-            put(win, 2 + i, 1, fit(f" {label(p)}", pw - 8) + f"{n:>5} ", attr)
+            put(win, 2 + i, 1, fit(f" {label(p)}", pw - 16) + f"{n:>5} {fmt_cost(spent[p]):>7} ", attr)
         win.refresh()
         k = win.get_wch()
         if k in (curses.KEY_UP, "\x10"):
@@ -775,7 +949,7 @@ def run_ui(stdscr, sessions, query, project=None, reload=None):
     sorting = False
     show_hidden = False
     follow = None                       # session id the selection should stick to
-    sort_col, sort_desc = 4, True       # UPDATED, newest first
+    sort_col, sort_desc = "updated", True   # newest first
     saved_query = ""
     sel = top = 0
     msg = ""
@@ -805,14 +979,10 @@ def run_ui(stdscr, sessions, query, project=None, reload=None):
         elif sel >= top + list_h:
             top = sel - list_h + 1
 
-        # columns: project | session | description | created | updated
-        tw = 10
-        rest = max(0, w - 2 * tw - 4 - 1)
-        cw_proj, cw_title = min(24, rest * 18 // 100), rest * 28 // 100
-        cols = [cw_proj, cw_title, rest - cw_proj - cw_title, tw, tw]
-
-        def line(cells):
-            return " ".join(fit(c, n) for c, n in zip(cells, cols))
+        keys = list(VISIBLE)
+        if sort_col not in keys:
+            sort_col = keys[-1]
+        cols = column_widths(keys, w - 1)
 
         stdscr.erase()
         filters = []
@@ -830,26 +1000,31 @@ def run_ui(stdscr, sessions, query, project=None, reload=None):
         put(stdscr, 0, 0, head + " " * gap + info if gap >= 2 else head,
             curses.A_BOLD | (curses.color_pair(3) if filters else 0))
         x = 0
-        for i, (name, n) in enumerate(zip(COLUMNS, cols)):
-            if i == sort_col:
+        for key, n in zip(keys, cols):
+            name = COL[key][1]
+            if key == sort_col:
                 name += " ▼" if sort_desc else " ▲"
             attr = curses.color_pair(2) | curses.A_BOLD
-            if sorting and i == sort_col:
+            if sorting and key == sort_col:
                 attr = curses.color_pair(1) | curses.A_BOLD
             put(stdscr, 1, x, fit(name, n), attr)
             x += n + 1
         for i, r in enumerate(rows[top:top + list_h]):
-            live = "● " if running(r, live_ids) else ""
-            cells = [f"{project_emoji(r['project'])} {r['project']}", ("★ " if r["id"] in FAVORITES else "") + live + (r["title"] or r["id"][:8]),
-                     r["first"], rel_time(r["created"]), rel_time(r["updated"])]
+            mark = ("★ " if r["id"] in FAVORITES else "") + ("● " if running(r, live_ids) else "")
+            cells = [(mark if key == "session" else "") + COL[key][3](r) for key in keys]
             attr = curses.color_pair(1) if top + i == sel else curses.A_NORMAL
-            put(stdscr, 2 + i, 0, line(cells), attr)
+            put(stdscr, 2 + i, 0, " ".join(fit(c, n) for c, n in zip(cells, cols)), attr)
 
         y = h - detail_h - 1
         stdscr.hline(y, 0, curses.ACS_HLINE, w)
         if rows:
             r = rows[sel]
             info_line = f"{r['id']}  ·  {short_path(r['cwd'])}  ·  {r['prompts']} prompts"
+            if r["branch"]:
+                info_line += f"  ·  ⎇ {r['branch']}"
+            if r["model"]:
+                info_line += (f"  ·  {model_short(r['model'])}  ·  {fmt_tokens(session_tokens(r))} tok"
+                              f"  ·  {fmt_cost(session_cost(r))}  ·  {fmt_duration(session_secs(r))}")
             if not os.path.isdir(r["cwd"]):
                 info_line += "  ·  ⚠ folder missing"
             put(stdscr, y + 1, 0, info_line, curses.A_BOLD)
@@ -870,9 +1045,9 @@ def run_ui(stdscr, sessions, query, project=None, reload=None):
             continue
         if sorting:
             if k == curses.KEY_LEFT:
-                sort_col = (sort_col - 1) % len(COLUMNS)
+                sort_col = keys[(keys.index(sort_col) - 1) % len(keys)]
             elif k == curses.KEY_RIGHT:
-                sort_col = (sort_col + 1) % len(COLUMNS)
+                sort_col = keys[(keys.index(sort_col) + 1) % len(keys)]
             elif k == curses.KEY_UP:
                 sort_desc = False
             elif k == curses.KEY_DOWN:
@@ -919,6 +1094,8 @@ def run_ui(stdscr, sessions, query, project=None, reload=None):
             searching, saved_query = True, query
         elif k == "s":
             sorting, sel = True, 0
+        elif k == "c":
+            msg = columns_menu(stdscr)
         elif k == " ":
             if rows:
                 msg = preview(stdscr, rows[sel])

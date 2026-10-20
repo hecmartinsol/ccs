@@ -441,6 +441,83 @@ class PreviewTest(unittest.TestCase):
         self.assertEqual(ccs.exchange_starts([]), [])
 
 
+class BranchSearchTest(unittest.TestCase):
+    def test_search_matches_branch_and_model(self):
+        base = {"title": "", "first": "x", "last": "", "cwd": "/w", "id": "i"}
+        rows = [dict(base, id="a", branch="feat/login", model="claude-opus-5-5"),
+                dict(base, id="b", branch="main", model="claude-sonnet-5-5")]
+        self.assertEqual([r["id"] for r in ccs.filter_rows(rows, "feat/login")], ["a"])
+        self.assertEqual([r["id"] for r in ccs.filter_rows(rows, "sonnet")], ["b"])
+
+
+class UsageColumnsTest(unittest.TestCase):
+    def tearDown(self):
+        ccs.apply_config({})
+
+    def session_file(self, d, records):
+        p = os.path.join(d, "s.jsonl")
+        write_jsonl(p, records)
+        return p
+
+    def test_parse_branch_model_and_deduped_usage(self):
+        def asst(mid, model, out, **extra):
+            return {"type": "assistant", "gitBranch": "feat/x", "message": {
+                "id": mid, "model": model, "content": [],
+                "usage": {"input_tokens": 10, "output_tokens": out, "cache_read_input_tokens": 100,
+                          "cache_creation_input_tokens": 50,
+                          "cache_creation": {"ephemeral_1h_input_tokens": 20}}}, **extra}
+        with tempfile.TemporaryDirectory() as d:
+            p = self.session_file(d, [
+                user("hola", "2026-01-01T00:00:00Z", cwd="/x", gitBranch="main"),
+                asst("m1", "claude-sonnet-5-5", 5), asst("m1", "claude-sonnet-5-5", 5),  # same message twice
+                asst("m2", "claude-opus-5-5", 7),
+                asst("m3", "<synthetic>", 1),
+            ])
+            s = ccs.parse_session(p)
+        self.assertEqual(s["branch"], "feat/x")
+        self.assertEqual(s["model"], "claude-opus-5-5")
+        self.assertEqual(s["usage"], {"claude-sonnet-5-5": [10, 5, 100, 30, 20],
+                                      "claude-opus-5-5": [10, 7, 100, 30, 20]})
+        self.assertEqual(ccs.session_tokens(s), 165 + 167)
+
+    def test_cost_uses_cache_multipliers(self):
+        s = {"usage": {"claude-sonnet-5-5": [1_000_000, 1_000_000, 1_000_000, 1_000_000, 1_000_000]}}
+        # in 2 + out 10 + read 0.2 + write5m 2*1.25 + write1h 2*2
+        self.assertAlmostEqual(ccs.session_cost(s), 2 + 10 + 0.2 + 2.5 + 4)
+
+    def test_unknown_model_has_no_cost_and_config_can_price_it(self):
+        s = {"usage": {"claude-foo-9": [1_000_000, 0, 0, 0, 0]}}
+        self.assertIsNone(ccs.session_cost(s))
+        ccs.apply_config({"prices": {"claude-foo-9": [3, 15, 0.3]}})
+        self.assertAlmostEqual(ccs.session_cost(s), 3)
+        self.assertEqual(ccs.price_for("claude-sonnet-5-5-20260101"), ccs.PRICES["claude-sonnet-5-5"])
+
+    def test_formatters(self):
+        self.assertEqual([ccs.fmt_tokens(n) for n in (999, 1234, 15_600, 2_500_000)],
+                         ["999", "1.2k", "15.6k", "2.5M"])
+        self.assertEqual([ccs.fmt_cost(c) for c in (None, 0.001, 0.5, 12.34, 234.5)],
+                         ["—", "<$0.01", "$0.50", "$12.3", "$234"])
+        self.assertEqual([ccs.fmt_duration(n) for n in (30, 125, 3725, 90000)],
+                         ["30s", "2m", "1h02m", "1d1h"])
+
+    def test_column_widths_fit_and_fixed_stay(self):
+        for keys in (ccs.DEFAULT_COLUMNS, [c[0] for c in ccs.COLS], ["session", "cost"]):
+            for total in (60, 120, 200):
+                widths = ccs.column_widths(keys, total)
+                self.assertEqual(len(widths), len(keys))
+                if total >= 120:
+                    self.assertEqual(sum(widths) + len(keys) - 1, total)
+        w = ccs.column_widths(["project", "cost", "updated"], 100)
+        self.assertEqual(w[1:], [7, 10])                       # fixed widths never change
+        self.assertEqual(sum(w) + 2, 100)                      # the lone flexible column takes the rest
+
+    def test_columns_config(self):
+        ccs.apply_config({"columns": ["session", "cost", "bogus"]})
+        self.assertEqual(ccs.VISIBLE, ["session", "cost"])
+        ccs.apply_config({"columns": ["bogus"]})
+        self.assertEqual(ccs.VISIBLE, ccs.DEFAULT_COLUMNS)
+
+
 class SortRowsTest(unittest.TestCase):
     R = [
         {"id": "1", "project": "b", "title": "", "first": "z", "created": "2", "updated": "9"},
@@ -452,14 +529,14 @@ class SortRowsTest(unittest.TestCase):
         return [r["id"] for r in ccs.sort_rows(self.R, col, desc)]
 
     def test_each_column(self):
-        self.assertEqual(self.order(0, False), ["2", "1", "3"])    # case-insensitive
-        self.assertEqual(self.order(1, False), ["1", "3", "2"])    # no title -> id ("1" < "alpha")
-        self.assertEqual(self.order(2, False), ["3", "2", "1"])
-        self.assertEqual(self.order(3, False), ["3", "1", "2"])
-        self.assertEqual(self.order(4, True), ["1", "3", "2"])
+        self.assertEqual(self.order("project", False), ["2", "1", "3"])    # case-insensitive
+        self.assertEqual(self.order("session", False), ["1", "3", "2"])    # no title -> id ("1" < "alpha")
+        self.assertEqual(self.order("first", False), ["3", "2", "1"])
+        self.assertEqual(self.order("created", False), ["3", "1", "2"])
+        self.assertEqual(self.order("updated", True), ["1", "3", "2"])
 
     def test_desc_reverses(self):
-        self.assertEqual(self.order(3, True), ["2", "1", "3"])
+        self.assertEqual(self.order("created", True), ["2", "1", "3"])
 
 
 class ModeRowsTest(unittest.TestCase):

@@ -51,6 +51,7 @@ ln -sf "$PWD/ccs.py" ~/.local/bin/ccs
 | `d` | move the session to the trash (asks `y/N`; refuses running sessions). Restore by moving the file back from `~/.local/share/ccs/trash/` |
 | `*` | pin/unpin the session (★, stays on top; saved as `favorites` in the config) |
 | `Ctrl-H` | show/hide projects matched by `hidden` |
+| `c` | choose which columns to show (saved as `columns` in the config) |
 | `p` | project picker: type to filter, ↑↓ + Enter, Esc clears/closes |
 | `Ctrl-R` | refresh now (the list also refreshes itself every 30 s; the header shows a `⟳` countdown) |
 | `x` | clear filters |
@@ -89,6 +90,8 @@ rules (`voice` → 🎤, `doc` → 📁, `api` → 🔌…); otherwise one from 
 by the `*` key (session ids). `terminal` is the command prefix used by `Ctrl-J` to run `claude`
 in a new window (`"ghostty -e"`, `"gnome-terminal --"`…); without it ccs tries `$TERM_PROGRAM`, `$TERMINAL`
 and the common emulators.
+
+Optional columns (hidden by default, toggle with `c`): `BRANCH` (git branch), `MODEL`, `TURNS` (your prompts), `TOKENS` (all tokens incl. cache), `COST` (estimated $ from Anthropic's public prices; `—` if the model has no known price; override with `prices`: `{"claude-foo-1": [input, output, cache read]}` in $/MTok), `DURATION` (first to last message). The detail panel and the project picker (`p`, cost per project) always show them. `/` search also matches branch and model.
 
 ## How it works
 
