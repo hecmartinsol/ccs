@@ -21,11 +21,12 @@ PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 CACHE_FILE = os.path.join(
     os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "ccs", "index.json"
 )
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 MAX_TEXT = 300
 
 NOISE_PREFIXES = ("<system-reminder>", "<local-command", "<bash-", "Caveat:", "<task-notification>",
                   "[Request interrupted")
+IGNORED_COMMANDS = {"/clear", "/compact", "/exit", "/resume"}
 CMD_NAME = re.compile(r"<command-name>(.*?)</command-name>", re.S)
 CMD_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.S)
 
@@ -49,6 +50,8 @@ def _user_text(rec):
     if m:
         args = CMD_ARGS.search(text)
         text = (m.group(1) + " " + (args.group(1) if args else "")).strip()
+        if text in IGNORED_COMMANDS:
+            return None
     elif text.startswith(NOISE_PREFIXES):
         return None
     return " ".join(text.split())[:MAX_TEXT]
@@ -80,8 +83,10 @@ def parse_session(path):
                     s["updated"] = ts
             if not s["cwd"] and rec.get("cwd"):
                 s["cwd"] = rec["cwd"]
-            if not s["entrypoint"] and rec.get("entrypoint"):
-                s["entrypoint"] = rec["entrypoint"]
+            # una sesión lanzada por SDK y retomada a mano cuenta como interactiva
+            ep = rec.get("entrypoint")
+            if ep and (not s["entrypoint"] or ep == "cli"):
+                s["entrypoint"] = ep
             if t == "user":
                 text = _user_text(rec)
                 if text:

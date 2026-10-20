@@ -80,6 +80,22 @@ class ParseSessionTest(unittest.TestCase):
         ])
         self.assertEqual(ccs.parse_session(self.path)["first"], "/plan VPO-1")
 
+    def test_interactive_if_ever_resumed_from_cli(self):
+        write_jsonl(self.path, [
+            user("tarea", "2026-10-18T13:00:00Z", entrypoint="sdk-cli"),
+            user("sigo yo", "2026-10-19T05:00:00Z", entrypoint="cli"),
+        ])
+        self.assertEqual(ccs.parse_session(self.path)["entrypoint"], "cli")
+
+    def test_clear_is_not_a_description(self):
+        write_jsonl(self.path, [
+            user("<command-name>/clear</command-name>", "2026-10-18T13:00:00Z"),
+            user("de verdad", "2026-10-18T13:01:00Z"),
+        ])
+        s = ccs.parse_session(self.path)
+        self.assertEqual(s["first"], "de verdad")
+        self.assertEqual(s["prompts"], 1)
+
     def test_returns_none_without_real_prompts(self):
         write_jsonl(self.path, [{"type": "ai-title", "aiTitle": "x"}])
         self.assertIsNone(ccs.parse_session(self.path))
