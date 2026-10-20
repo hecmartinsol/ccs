@@ -609,60 +609,88 @@ def put_help(win, y, pairs):
 
 
 def preview_lines(msgs, width):
-    """Wrapped lines of a conversation: [(text, kind)], kind 0 = body, 1 = user header, 2 = claude header."""
+    """Wrapped lines of a conversation: [(text, kind)].
+    kind: 1 user header, 2 claude header, 3 user text, 0 claude text."""
     out = []
     for role, text in msgs:
-        out.append(("▌ You" if role == "user" else "▌ Claude", 1 if role == "user" else 2))
+        user = role == "user"
+        out.append(("▌ You" if user else "▌ Claude", 1 if user else 2))
         for para in text.splitlines() or [""]:
-            out.extend((ln, 0) for ln in (textwrap.wrap(para, max(10, width), replace_whitespace=False,
-                                                        drop_whitespace=True) or [""]))
+            out.extend((ln, 3 if user else 0) for ln in
+                       (textwrap.wrap(para, max(10, width), replace_whitespace=False) or [""]))
         out.append(("", 0))
     return out
 
 
+def exchange_starts(lines):
+    """Index of the first line of each question/answer exchange."""
+    starts = [i for i, (_, k) in enumerate(lines) if k == 1]
+    if lines and (not starts or starts[0] != 0):
+        starts.insert(0, 0)
+    return starts
+
+
 def preview(stdscr, session):
-    """Scrollable popup with the last messages of a session. Space/Esc/q closes."""
+    """Full-screen reader of a session, opened at the end. ↑↓ jump between question/answer
+    exchanges, PgUp/PgDn scroll. Space/Esc/q closes."""
     try:
         msgs = read_preview(session["path"])
     except OSError as e:
         return f"Cannot read session: {e.strerror or e}"
     h, w = stdscr.getmaxyx()
-    ph, pw = max(5, h - 2), max(20, w - 4)
-    win = curses.newwin(ph, pw, (h - ph) // 2, (w - pw) // 2)
+    win = curses.newwin(h, w, 0, 0)
     win.keypad(True)
-    lines = preview_lines(msgs, pw - 6)
-    vis = ph - 2
-    top = max(0, len(lines) - vis)                      # start at the latest messages
-    title = f" {session['title'] or session['id'][:8]} · {len(msgs)} messages "
+    lines = preview_lines(msgs, w - 6)
+    starts = exchange_starts(lines)
+    vis = max(1, h - 2)
+    max_top = max(0, len(lines) - vis)
+    cur = len(starts) - 1                               # current exchange
+    top = max_top                                       # start at the very bottom
+    title = f" {session['title'] or session['id'][:8]}  ·  {short_path(session['cwd'])} "
+    keys = [("↑↓", "question"), ("PgUp/PgDn", "scroll"), ("g/G", "first/last"), ("Space/Esc", "close")]
     while True:
         win.erase()
-        win.box()
-        put(win, 0, 2, title, curses.A_BOLD)
+        put(win, 0, 0, fit(title, w - 1), curses.color_pair(1) | curses.A_BOLD)
+        cur_start = starts[cur] if starts else 0
         for i, (text, kind) in enumerate(lines[top:top + vis]):
-            attr = (curses.color_pair(2) | curses.A_BOLD if kind == 1
-                    else curses.color_pair(3) | curses.A_BOLD if kind == 2 else curses.A_NORMAL)
-            put(win, 1 + i, 2 if kind else 4, text, attr)
+            if kind == 1:
+                attr = curses.color_pair(1) | curses.A_BOLD if top + i == cur_start \
+                    else curses.color_pair(2) | curses.A_BOLD
+            elif kind == 2:
+                attr = curses.color_pair(3) | curses.A_BOLD
+            else:
+                attr = curses.A_BOLD if kind == 3 else curses.A_NORMAL
+            put(win, 1 + i, 1 if kind in (1, 2) else 3, text, attr)
         if not msgs:
-            put(win, 1, 4, "(no messages)", curses.A_DIM)
-        pct = 100 if len(lines) <= vis else int(100 * (top + vis) / len(lines))
-        put(win, ph - 1, 2, f" ↑↓ PgUp/PgDn g/G scroll · Space/Esc close · {pct}% ", curses.A_DIM)
+            put(win, 2, 3, "(no messages)", curses.A_DIM)
+        put_help(win, h - 1, keys)
+        pos = f"{cur + 1}/{len(starts)} "
+        put(win, h - 1, max(0, w - 1 - len(pos)), pos, curses.color_pair(2) | curses.A_BOLD)
         win.refresh()
         k = win.get_wch()
         if k in (curses.KEY_UP, "k", "\x10"):
-            top -= 1
+            if top > cur_start and cur_start <= max_top:
+                top = cur_start                         # first back to this question
+            elif cur > 0:
+                cur -= 1
+                top = starts[cur]
         elif k in (curses.KEY_DOWN, "j", "\x0e"):
-            top += 1
+            if cur < len(starts) - 1:
+                cur += 1
+                top = starts[cur]
+            else:
+                top = max_top
         elif k in (curses.KEY_PPAGE, "b"):
             top -= vis
         elif k in (curses.KEY_NPAGE, "f"):
             top += vis
         elif k in (curses.KEY_HOME, "g"):
-            top = 0
+            cur, top = 0, 0
         elif k in (curses.KEY_END, "G"):
-            top = len(lines)
+            cur, top = len(starts) - 1, max_top
         elif k in (" ", "q", "\x1b"):
             return ""
-        top = max(0, min(top, max(0, len(lines) - vis)))
+        top = max(0, min(top, max_top))
 
 
 def pick_project(stdscr, rows, current):

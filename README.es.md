@@ -81,7 +81,7 @@ Teclas:
 | `R` | refrescar ya (la lista también se refresca sola cada 30 s; la cabecera muestra una cuenta atrás `⟳`) |
 | `x` | limpiar filtros |
 | `Tab` | rota local → crons (`sdk-cli`, `claude -p`) → agentes en segundo plano (`claude agents`; `●` = activo, Enter hace attach) |
-| `Space` | ver la conversación (últimos 100 mensajes; ↑↓ PgUp/PgDn g/G para moverte, Space/Esc cierra) |
+| `Space` | lector a pantalla completa de la conversación (últimos 100 mensajes), abierto al final: ↑↓ saltan entre pregunta/respuesta, PgUp/PgDn desplazan, g/G primera/última, Space/Esc cierra |
 | `Ctrl-J` (`Ctrl-Enter` si la terminal lo envía) | abrir la sesión en una ventana de terminal nueva sin cerrar ccs (`terminal` en la config, si no se autodetecta) |
 | `Ctrl-T` | abrir la sesión en una ventana nueva de tmux (solo dentro de tmux) |
 | `Enter` | `cd` a la carpeta + `claude --resume <id>` (las marcadas con `●` ya están en marcha: se rechaza, salvo agentes, que hacen attach) |

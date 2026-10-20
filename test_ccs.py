@@ -431,9 +431,18 @@ class PreviewTest(unittest.TestCase):
 
     def test_preview_lines_wrap_and_label(self):
         lines = ccs.preview_lines([("user", "uno dos tres cuatro"), ("claude", "a\nb")], 10)
-        self.assertEqual([k for _, k in lines if k], [1, 2])
-        self.assertTrue(all(len(t) <= 10 for t, k in lines if not k))
-        self.assertIn(("b", 0), lines)
+        self.assertEqual([k for _, k in lines if k in (1, 2)], [1, 2])
+        self.assertTrue(all(len(t) <= 10 for t, k in lines if k not in (1, 2)))
+        self.assertIn(("uno dos", 3), lines)                        # question text
+        self.assertIn(("b", 0), lines)                              # answer text
+
+    def test_exchange_starts(self):
+        msgs = [("claude", "x"), ("user", "q1"), ("claude", "a1"), ("claude", "a1b"), ("user", "q2")]
+        lines = ccs.preview_lines(msgs, 20)
+        starts = ccs.exchange_starts(lines)
+        self.assertEqual(starts[0], 0)
+        self.assertEqual([lines[i][0] for i in starts[1:]], ["▌ You", "▌ You"])
+        self.assertEqual(ccs.exchange_starts([]), [])
 
 
 class SortRowsTest(unittest.TestCase):
