@@ -102,6 +102,20 @@ def parse_session(path):
     return s
 
 
+def rename_session(path, session_id, title):
+    """Append a custom-title record, the same one `/rename` writes."""
+    rec = json.dumps({"type": "custom-title", "customTitle": title, "sessionId": session_id},
+                     ensure_ascii=False)
+    with open(path, "rb+") as f:
+        f.seek(0, os.SEEK_END)
+        lead = b""
+        if f.tell():
+            f.seek(-1, os.SEEK_END)
+            if f.read(1) != b"\n":
+                lead = b"\n"
+        f.write(lead + rec.encode("utf-8") + b"\n")
+
+
 def load_sessions(projects_dir=PROJECTS_DIR, cache_file=CACHE_FILE, progress=None):
     """List of sessions, re-parsing only new or modified files."""
     try:
@@ -134,7 +148,7 @@ def load_sessions(projects_dir=PROJECTS_DIR, cache_file=CACHE_FILE, progress=Non
         with open(tmp, "w") as f:
             json.dump({"v": CACHE_VERSION, "files": new}, f)
         os.replace(tmp, cache_file)
-    sessions = [e["d"] for e in new.values() if e["d"]]
+    sessions = [dict(e["d"], path=p) for p, e in new.items() if e["d"]]
     sessions.sort(key=lambda s: s["updated"], reverse=True)
     return sessions
 
@@ -353,7 +367,7 @@ def fit(text, width):
     return text + " " * (width - disp_width(text))
 
 
-HELP = "↑↓/jk move · / search · s sort · p project (type to filter) · x clear filters · Tab local/crons/agents · Enter resume · q quit"
+HELP = "↑↓/jk move · / search · s sort · r rename · p project (type to filter) · x clear filters · Tab local/crons/agents · Enter resume · q quit"
 HELP_SORT = "←→ column · ↑ asc · ↓ desc · Enter/Esc/s done"
 HELP_SEARCH = "type to filter · ↑↓ move · Enter accept · Esc cancel"
 
@@ -366,6 +380,32 @@ def put(win, y, x, text, attr=0):
             win.addstr(y, x, fit(text, w - 1 - x), attr)
         except curses.error:
             pass
+
+
+def prompt_text(stdscr, label, initial=""):
+    """One-line input on the bottom row. Returns the text, or None if cancelled."""
+    text = initial
+    while True:
+        h, w = stdscr.getmaxyx()
+        stdscr.move(h - 1, 0)
+        stdscr.clrtoeol()
+        put(stdscr, h - 1, 0, f"{label}: {text}_  (Enter save · Esc cancel)",
+            curses.color_pair(3) | curses.A_BOLD)
+        stdscr.refresh()
+        try:
+            k = stdscr.get_wch()
+        except curses.error:
+            continue
+        if k in ("\n", "\r", curses.KEY_ENTER):
+            return text.strip()
+        elif k == "\x1b":
+            return None
+        elif k in (curses.KEY_BACKSPACE, "\x7f", "\b"):
+            text = text[:-1]
+        elif k == "\x15":                         # Ctrl-U
+            text = ""
+        elif isinstance(k, str) and k.isprintable():
+            text += k
 
 
 def pick_project(stdscr, rows, current):
@@ -558,6 +598,18 @@ def run_ui(stdscr, sessions, query, project=None):
             searching, saved_query = True, query
         elif k == "s":
             sorting, sel = True, 0
+        elif k == "r":
+            if not rows:
+                continue
+            r = rows[sel]
+            new = prompt_text(stdscr, "Rename", r["title"])
+            if new:
+                try:
+                    rename_session(r["path"], r["id"], new)
+                    r["title"] = new
+                    msg = f"Renamed to “{new}”"
+                except OSError as e:
+                    msg = f"Rename failed: {e.strerror or e}"
         elif k == "p":
             choice = pick_project(stdscr, base, project)
             if choice is not False:

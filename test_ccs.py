@@ -269,6 +269,25 @@ class ProjectFilterTest(unittest.TestCase):
         self.assertEqual(ccs.project_list(rows), [("cash", 1), ("shop", 2)])
 
 
+class RenameTest(unittest.TestCase):
+    def test_roundtrip_and_cache_refresh(self):
+        with tempfile.TemporaryDirectory() as d:
+            proj = os.path.join(d, "p")
+            os.makedirs(proj)
+            path = os.path.join(proj, "abc.jsonl")
+            write_jsonl(path, [user("hola", "2026-01-01T00:00:00Z", cwd="/x")])
+            with open(path, "a") as f:            # no trailing newline
+                f.write('{"type": "ai-title", "aiTitle": "auto"}')
+            cache = os.path.join(d, "cache.json")
+            first = ccs.load_sessions(d, cache)[0]
+            self.assertEqual(first["title"], "auto")
+            self.assertEqual(first["path"], path)
+            ccs.rename_session(path, "abc", "ñandú ✓")
+            second = ccs.load_sessions(d, cache)[0]
+            self.assertEqual(second["title"], "ñandú ✓")
+            self.assertEqual(second["prompts"], 1)
+
+
 class SortRowsTest(unittest.TestCase):
     R = [
         {"id": "1", "project": "b", "title": "", "first": "z", "created": "2", "updated": "9"},
