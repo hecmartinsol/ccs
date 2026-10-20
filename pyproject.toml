@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-ccs"
+dynamic = ["version"]
+description = "Minimal TUI to browse and resume Claude Code sessions"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Héctor Martín Solís" }]
+requires-python = ">=3.8"
+dependencies = []
+keywords = ["claude", "claude-code", "tui", "curses", "sessions"]
+classifiers = [
+    "Environment :: Console :: Curses",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/hecmartinsol/ccs"
+Issues = "https://github.com/hecmartinsol/ccs/issues"
+
+[project.scripts]
+ccs = "ccs:cli"
+
+[tool.setuptools]
+py-modules = ["ccs"]
+
+[tool.setuptools.dynamic]
+version = { attr = "ccs.__version__" }

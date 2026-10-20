@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""ccs — TUI mínima para listar y retomar sesiones de Claude Code.
+"""ccs — minimal TUI to browse and resume Claude Code sessions.
 
-Lee ~/.claude/projects/*/*.jsonl, cachea el índice por mtime/tamaño y al
-pulsar Enter hace chdir a la carpeta de la sesión + `claude --resume <id>`.
-Sin dependencias: solo stdlib (curses).
+Reads ~/.claude/projects/*/*.jsonl, caches the index by mtime/size and on
+Enter does chdir to the session's folder + `claude --resume <id>`.
+No dependencies: stdlib only (curses).
 """
 import curses
 import glob
@@ -16,6 +16,8 @@ import textwrap
 import unicodedata
 import zlib
 from datetime import datetime, timezone
+
+__version__ = "0.1.0"
 
 PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 CACHE_FILE = os.path.join(
@@ -34,7 +36,7 @@ CMD_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.S)
 # ---------------------------------------------------------------- parsing
 
 def _user_text(rec):
-    """Texto visible de un mensaje de usuario real, o None si es ruido."""
+    """Visible text of a real user message, or None if it is noise."""
     if rec.get("isMeta") or rec.get("isSidechain"):
         return None
     content = (rec.get("message") or {}).get("content")
@@ -58,7 +60,7 @@ def _user_text(rec):
 
 
 def parse_session(path):
-    """Extrae metadatos de un .jsonl de sesión. None si no tiene prompts reales."""
+    """Extract metadata from a session .jsonl. None if it has no real prompts."""
     s = {"id": os.path.basename(path)[:-len(".jsonl")], "title": "", "first": "", "last": "",
          "cwd": "", "created": "", "updated": "", "entrypoint": "", "prompts": 0}
     ai_title = custom_title = ""
@@ -83,7 +85,7 @@ def parse_session(path):
                     s["updated"] = ts
             if not s["cwd"] and rec.get("cwd"):
                 s["cwd"] = rec["cwd"]
-            # una sesión lanzada por SDK y retomada a mano cuenta como interactiva
+            # a session launched by the SDK and resumed by hand counts as interactive
             ep = rec.get("entrypoint")
             if ep and (not s["entrypoint"] or ep == "cli"):
                 s["entrypoint"] = ep
@@ -100,7 +102,7 @@ def parse_session(path):
 
 
 def load_sessions(projects_dir=PROJECTS_DIR, cache_file=CACHE_FILE, progress=None):
-    """Lista de sesiones, reparseando solo ficheros nuevos o modificados."""
+    """List of sessions, re-parsing only new or modified files."""
     try:
         with open(cache_file) as f:
             cache = json.load(f)
@@ -148,16 +150,16 @@ def filter_rows(rows, query, project=None):
     return out
 
 
-# ---------------------------------------------------------------- proyectos
+# ---------------------------------------------------------------- projects
 
 CONFIG_FILE = os.path.join(
     os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "ccs", "config.json"
 )
 
-# Emojis de un solo codepoint y ancho doble (sin variation selector) para que
-# la tabla no se desalinee. El config del usuario se antepone a estos.
+# Single-codepoint, double-width emojis (no variation selector) so the table
+# stays aligned. The user's config takes precedence over these.
 DEFAULT_EMOJIS = {"~": "🏠"}
-DEFAULT_RULES = [  # (subcadena en el nombre, emoji); gana la primera que encaje
+DEFAULT_RULES = [  # (substring of the name, emoji); first match wins
     ("agent", "🤖"), ("ai-", "🤖"), ("claude", "🧠"),
     ("cash", "🪙"), ("coin", "💰"), ("bank", "🏦"), ("finan", "💰"),
     ("voice", "🎤"), ("whisper", "🎤"), ("dictate", "🎤"),
@@ -177,19 +179,19 @@ RULES = list(DEFAULT_RULES)
 
 
 def load_config(path=CONFIG_FILE):
-    """Config JSON opcional del usuario; {} si no existe."""
+    """Optional user JSON config; {} if missing."""
     try:
         with open(path) as f:
             return json.load(f)
     except FileNotFoundError:
         return {}
     except (OSError, ValueError) as e:
-        raise SystemExit(f"ccs: config inválido en {path}: {e}")
+        raise SystemExit(f"ccs: invalid config in {path}: {e}")
 
 
 def apply_config(cfg):
-    """workspaces: carpetas cuyos hijos de primer nivel son proyectos.
-    emojis: {proyecto: emoji}.  rules: [[subcadena, emoji], ...] (antes que las de serie)."""
+    """workspaces: folders whose top-level children are projects.
+    emojis: {project: emoji}.  rules: [[substring, emoji], ...] (before the built-in ones)."""
     global WORKSPACES, EMOJIS, RULES
     WORKSPACES = [os.path.expanduser(w).rstrip("/") for w in cfg.get("workspaces", [])]
     EMOJIS = {**DEFAULT_EMOJIS, **cfg.get("emojis", {})}
@@ -200,8 +202,8 @@ WORKTREE_MARK = "/.claude/worktrees/"
 
 
 def project_key(cwd):
-    """Proyecto de una carpeta: hijo de primer nivel de un workspace, o su basename.
-    Los worktrees de Claude Code (<repo>/.claude/worktrees/x) cuentan como su repo."""
+    """Project of a folder: top-level child of a workspace, or its basename.
+    Claude Code worktrees (<repo>/.claude/worktrees/x) count as their repo."""
     if not cwd:
         return "?"
     cwd = cwd.rstrip("/").split(WORKTREE_MARK)[0]
@@ -224,7 +226,7 @@ def project_emoji(name):
 
 
 def initial_filters(argv, cwd):
-    """`ccs . texto` → (texto, proyecto de cwd). Args que son rutas fijan el proyecto."""
+    """`ccs . text` → (text, project of cwd). Args that are paths set the project."""
     project, words = None, []
     for arg in argv:
         if arg == "." or arg.startswith(("/", "./", "../", "~")):
@@ -236,7 +238,7 @@ def initial_filters(argv, cwd):
 
 
 def project_list(rows):
-    """[(proyecto, nº sesiones)] ordenado por la sesión más reciente de cada uno."""
+    """[(project, session count)] sorted by each project's most recent session."""
     latest, count = {}, {}
     for r in rows:
         p = r["project"]
@@ -256,7 +258,7 @@ def rel_time(ts, now=None):
     dt = parse_ts(ts)
     secs = (now - dt).total_seconds()
     if secs < 60:
-        return "ahora"
+        return "now"
     if secs < 3600:
         return f"{int(secs // 60)}m"
     if secs < 86400:
@@ -284,7 +286,7 @@ def disp_width(text):
 
 
 def fit(text, width):
-    """Recorta/rellena a `width` columnas de terminal (emoji = 2)."""
+    """Truncate/pad to `width` terminal columns (emoji = 2)."""
     if width <= 0:
         return ""
     if disp_width(text) > width:
@@ -298,12 +300,12 @@ def fit(text, width):
     return text + " " * (width - disp_width(text))
 
 
-HELP = "↑↓/jk mover · / buscar · p proyecto · x limpiar filtros · Tab crons · Enter retomar · q salir"
-HELP_SEARCH = "escribe para filtrar · ↑↓ mover · Enter aceptar · Esc cancelar"
+HELP = "↑↓/jk move · / search · p project · x clear filters · Tab crons · Enter resume · q quit"
+HELP_SEARCH = "type to filter · ↑↓ move · Enter accept · Esc cancel"
 
 
 def put(win, y, x, text, attr=0):
-    """addstr recortado al ancho de la ventana, sin petar en la última celda."""
+    """addstr clipped to the window width, without crashing on the last cell."""
     h, w = win.getmaxyx()
     if 0 <= y < h and x < w - 1:
         try:
@@ -313,11 +315,11 @@ def put(win, y, x, text, attr=0):
 
 
 def pick_project(stdscr, rows, current):
-    """Popup con los proyectos distintos. Devuelve el elegido, None = todos, False = cancelado."""
+    """Popup with the distinct projects. Returns the chosen one, None = all, False = cancelled."""
     items = [(None, len(rows))] + project_list(rows)
     sel = next((i for i, (p, _) in enumerate(items) if p == current), 0)
     h, w = stdscr.getmaxyx()
-    labels = ["   (todos)" if p is None else f"{project_emoji(p)} {p}" for p, _ in items]
+    labels = ["   (all)" if p is None else f"{project_emoji(p)} {p}" for p, _ in items]
     pw = min(w - 4, max(30, max(disp_width(l) for l in labels) + 10))
     ph = min(h - 2, len(items) + 2)
     win = curses.newwin(ph, pw, (h - ph) // 2, (w - pw) // 2)
@@ -328,7 +330,7 @@ def pick_project(stdscr, rows, current):
         top = min(max(top, sel - vis + 1), sel)
         win.erase()
         win.box()
-        put(win, 0, 2, " Proyecto ", curses.A_BOLD)
+        put(win, 0, 2, " Project ", curses.A_BOLD)
         for i, (label, (_, n)) in enumerate(list(zip(labels, items))[top:top + vis]):
             attr = curses.color_pair(1) if top + i == sel else curses.A_NORMAL
             win.addstr(1 + i, 1, fit(f" {label}", pw - 8) + f"{n:>5} ", attr)
@@ -351,9 +353,9 @@ def pick_project(stdscr, rows, current):
 def run_ui(stdscr, sessions, query, project=None):
     curses.curs_set(0)
     curses.use_default_colors()
-    curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_CYAN)   # selección
-    curses.init_pair(2, curses.COLOR_CYAN, -1)                   # cabecera
-    curses.init_pair(3, curses.COLOR_YELLOW, -1)                 # aviso / filtros
+    curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_CYAN)   # selection
+    curses.init_pair(2, curses.COLOR_CYAN, -1)                   # header
+    curses.init_pair(3, curses.COLOR_YELLOW, -1)                 # warning / filters
     show_all = False
     searching = False
     saved_query = ""
@@ -371,7 +373,7 @@ def run_ui(stdscr, sessions, query, project=None):
         elif sel >= top + list_h:
             top = sel - list_h + 1
 
-        # columnas: proyecto | sesión | descripción | creado | últ.
+        # columns: project | session | description | created | updated
         tw = 10
         rest = max(0, w - 2 * tw - 4 - 1)
         cw_proj, cw_title = min(24, rest * 18 // 100), rest * 28 // 100
@@ -387,11 +389,11 @@ def run_ui(stdscr, sessions, query, project=None):
         if project:
             filters.append(f"{project_emoji(project)} {project}")
         head = "  ".join(filters) or "ccs"
-        info = f"{len(rows)}/{len(base)} sesiones{'  (incl. crons)' if show_all else ''}"
+        info = f"{len(rows)}/{len(base)} sessions{'  (incl. crons)' if show_all else ''}"
         gap = w - 1 - disp_width(head) - len(info)
         put(stdscr, 0, 0, head + " " * gap + info if gap >= 2 else head,
             curses.A_BOLD | (curses.color_pair(3) if filters else 0))
-        put(stdscr, 1, 0, line(["PROYECTO", "SESIÓN", "DESCRIPCIÓN", "CREADO", "ÚLT."]),
+        put(stdscr, 1, 0, line(["PROJECT", "SESSION", "DESCRIPTION", "CREATED", "UPDATED"]),
             curses.color_pair(2) | curses.A_BOLD)
         for i, r in enumerate(rows[top:top + list_h]):
             cells = [f"{project_emoji(r['project'])} {r['project']}", r["title"] or r["id"][:8],
@@ -405,10 +407,10 @@ def run_ui(stdscr, sessions, query, project=None):
             r = rows[sel]
             info_line = f"{r['id']}  ·  {short_path(r['cwd'])}  ·  {r['prompts']} prompts"
             if not os.path.isdir(r["cwd"]):
-                info_line += "  ·  ⚠ carpeta no existe"
+                info_line += "  ·  ⚠ folder missing"
             put(stdscr, y + 1, 0, info_line, curses.A_BOLD)
-            body = textwrap.wrap(f"Inicio: {r['first']}", w - 1)[:2] + \
-                textwrap.wrap(f"Último: {r['last']}", w - 1)[:2]
+            body = textwrap.wrap(f"First: {r['first']}", w - 1)[:2] + \
+                textwrap.wrap(f"Last:  {r['last']}", w - 1)[:2]
             for j, txt in enumerate(body[:detail_h - 1]):
                 put(stdscr, y + 2 + j, 0, txt, curses.A_DIM)
         put(stdscr, h - 1, 0, msg or (HELP_SEARCH if searching else HELP),
@@ -420,7 +422,7 @@ def run_ui(stdscr, sessions, query, project=None):
             k = stdscr.get_wch()
         except curses.error:
             continue
-        # navegación común a ambos modos
+        # navigation shared by both modes
         if k in (curses.KEY_UP, "\x10"):          # ↑ / Ctrl-P
             sel -= 1
         elif k in (curses.KEY_DOWN, "\x0e"):      # ↓ / Ctrl-N
@@ -471,16 +473,20 @@ def run_ui(stdscr, sessions, query, project=None):
                 continue
             r = rows[sel]
             if not os.path.isdir(r["cwd"]):
-                msg = f"La carpeta {r['cwd']} ya no existe"
+                msg = f"Folder {r['cwd']} no longer exists"
                 continue
             return r
 
 
 def main(argv):
+    if argv and argv[0] in ("-V", "--version"):
+        print(f"ccs {__version__}")
+        return 0
     if argv and argv[0] in ("-h", "--help"):
-        print("uso: ccs [.|ruta] [texto...]\n"
-              "  .|ruta   arranca filtrado por el proyecto de esa carpeta\n"
-              "  texto    arranca con ese filtro de búsqueda\n\n"
+        print("usage: ccs [.|path] [text...]\n"
+              "  .|path         start filtered by that folder's project\n"
+              "  text           start with that search filter\n"
+              "  -V, --version  show version\n\n"
               f"config: {CONFIG_FILE}\n\n" + HELP)
         return 0
     locale.setlocale(locale.LC_ALL, "")
@@ -488,7 +494,7 @@ def main(argv):
     query, project = initial_filters(argv, os.getcwd())
 
     def progress(i, n):
-        sys.stderr.write(f"\rindexando sesiones… {i}/{n}")
+        sys.stderr.write(f"\rindexing sessions… {i}/{n}")
         sys.stderr.flush()
 
     sessions = load_sessions(progress=progress)
@@ -496,7 +502,7 @@ def main(argv):
     for s in sessions:
         s["project"] = project_key(s["cwd"])
     if not sessions:
-        print("No hay sesiones en", PROJECTS_DIR)
+        print("No sessions found in", PROJECTS_DIR)
         return 1
     os.environ.setdefault("ESCDELAY", "25")
     chosen = curses.wrapper(run_ui, sessions, query, project)
@@ -507,5 +513,10 @@ def main(argv):
     os.execvp("claude", ["claude", "--resume", chosen["id"]])
 
 
-if __name__ == "__main__":
+def cli():
+    """Package entry point (`ccs` installed with pipx/uv)."""
     sys.exit(main(sys.argv[1:]))
+
+
+if __name__ == "__main__":
+    cli()

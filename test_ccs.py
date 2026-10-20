@@ -1,7 +1,11 @@
+import contextlib
+import io
 import json
 import os
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import ccs
 
@@ -147,7 +151,7 @@ class FilterTest(unittest.TestCase):
 class RelTimeTest(unittest.TestCase):
     def test_relative(self):
         now = ccs.parse_ts("2026-10-20T12:00:00Z")
-        self.assertEqual(ccs.rel_time("2026-10-20T11:59:30Z", now), "ahora")
+        self.assertEqual(ccs.rel_time("2026-10-20T11:59:30Z", now), "now")
         self.assertEqual(ccs.rel_time("2026-10-20T11:15:00Z", now), "45m")
         self.assertEqual(ccs.rel_time("2026-10-20T07:00:00Z", now), "5h")
         self.assertEqual(ccs.rel_time("2026-10-17T12:00:00Z", now), "3d")
@@ -263,6 +267,25 @@ class ProjectFilterTest(unittest.TestCase):
             {"project": "shop", "updated": "2026-10-01"},
         ]
         self.assertEqual(ccs.project_list(rows), [("cash", 1), ("shop", 2)])
+
+
+class CliTest(unittest.TestCase):
+    def test_version_flag_prints_version(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(ccs.main(["--version"]), 0)
+        self.assertEqual(out.getvalue().strip(), f"ccs {ccs.__version__}")
+
+    def test_version_is_semver(self):
+        self.assertRegex(ccs.__version__, r"^\d+\.\d+\.\d+$")
+
+    def test_cli_reads_sys_argv(self):
+        out = io.StringIO()
+        with mock.patch.object(sys, "argv", ["ccs", "--version"]), contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as cm:
+                ccs.cli()
+        self.assertEqual(cm.exception.code, 0)
+        self.assertIn(ccs.__version__, out.getvalue())
 
 
 if __name__ == "__main__":

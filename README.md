@@ -1,30 +1,70 @@
 # ccs — Claude Code sessions
 
-TUI mínima (Python stdlib + curses, sin dependencias) para listar sesiones de Claude Code y retomarlas.
+[Español](README.es.md)
+
+Minimal TUI to browse your [Claude Code](https://claude.com/claude-code) sessions across every project and
+resume one with a keystroke. Pure Python stdlib (curses), zero dependencies.
+
+![ccs screenshot](https://raw.githubusercontent.com/hecmartinsol/ccs/master/docs/screenshot.svg)
 
 ```
-ccs              # abre la tabla
-ccs .            # solo sesiones del proyecto de la carpeta actual
-ccs . pago       # ídem + filtro de texto
-ccs ~/code/api   # solo sesiones de ese proyecto
-ccs pago wallet  # arranca con ese filtro de texto
+ccs              # open the table
+ccs .            # only sessions from the current folder's project
+ccs . refund     # same + text filter
+ccs ~/code/api   # only sessions from that project
+ccs auth bug     # start with that text filter
 ```
 
-Columnas: proyecto (emoji + nombre) · sesión (título /rename o título IA) · descripción (primer prompt) ·
-creado · última actualización. Panel inferior: id, carpeta, primer y último prompt.
+`Enter` does `cd` into the session's folder and runs `claude --resume <id>`.
 
-Proyecto = nombre de la carpeta de la sesión. Los worktrees de Claude Code
-(`<repo>/.claude/worktrees/x`) cuentan como su repo. Con `workspaces` en el config, cualquier carpeta
-dentro de un workspace se agrupa por su hijo de primer nivel (`~/projects/shop/api` → `shop`).
+Columns: project (emoji + name) · session (`/rename` title or AI title) · description (first prompt) ·
+created · last update. The bottom panel shows id, folder, and first and last prompt.
 
-Emoji por proyecto: primero `emojis` del config, luego `rules` del config, luego reglas de serie por
-palabra clave (`voice` → 🎤, `doc` → 📁, `api` → 🔌…); si nada encaja, uno de una paleta elegido por hash
-del nombre (estable entre ejecuciones). Usa emojis de un solo codepoint y ancho doble (🟢, no ⚙️) para
-que la tabla no se desalinee.
+## Install
 
-## Config (opcional)
+```sh
+pipx install claude-ccs          # or: uv tool install claude-ccs
+```
 
-`~/.config/ccs/config.json` (respeta `$XDG_CONFIG_HOME`). Ejemplo en `config.example.json`:
+From source (latest `master`):
+
+```sh
+pipx install git+https://github.com/hecmartinsol/ccs
+# or just symlink the single file:
+ln -sf "$PWD/ccs.py" ~/.local/bin/ccs
+```
+
+## Requirements
+
+- Python ≥ 3.8
+- Linux or macOS. **Windows is not supported**: the stdlib has no `curses` there. WSL works.
+- `claude` on your `PATH` (only needed to resume)
+
+## Keys
+
+| Key | Action |
+|---|---|
+| `↑↓` `j k` `PgUp PgDn` `g G` | move |
+| `/` | free-text search (Enter accepts, Esc cancels) |
+| `p` | project picker (↑↓ + Enter, Esc closes) |
+| `x` | clear filters |
+| `Tab` | show/hide `sdk-cli` sessions (cron jobs, `claude -p`) |
+| `Enter` | `cd` to the folder + `claude --resume <id>` |
+| `q` / `Esc` | quit |
+
+## Projects and emojis
+
+Project = name of the session's folder. Claude Code worktrees (`<repo>/.claude/worktrees/x`) count as
+their repo. With `workspaces` in the config, any folder inside a workspace is grouped by its top-level
+child (`~/projects/shop/api` → `shop`).
+
+Emoji per project: first `emojis` from the config, then `rules` from the config, then built-in keyword
+rules (`voice` → 🎤, `doc` → 📁, `api` → 🔌…); otherwise one from a palette picked by hashing the name
+(stable across runs). Use single-codepoint, double-width emojis (🟢, not ⚙️) so the table stays aligned.
+
+## Config (optional)
+
+`~/.config/ccs/config.json` (honours `$XDG_CONFIG_HOME`). See `config.example.json`:
 
 ```json
 {
@@ -34,20 +74,25 @@ que la tabla no se desalinee.
 }
 ```
 
-Teclas:
+## How it works
 
-| Tecla | Acción |
-|---|---|
-| `↑↓` `j k` `PgUp PgDn` `g G` | mover |
-| `/` | búsqueda de texto libre (Enter acepta, Esc cancela) |
-| `p` | popup de proyectos (↑↓ + Enter, Esc cierra) |
-| `x` | limpiar filtros |
-| `Tab` | mostrar/ocultar sesiones `sdk-cli` (crons, `claude -p`) |
-| `Enter` | `cd` a la carpeta + `claude --resume <id>` |
-| `q` / `Esc` | salir |
+ccs reads `~/.claude/projects/*/*.jsonl` and caches the index in `~/.cache/ccs/index.json`; only files
+whose mtime/size changed are re-parsed.
 
-Índice cacheado en `~/.cache/ccs/index.json`; solo reparsea ficheros cuyo mtime/tamaño cambió.
+> **Note:** the session file format is internal to Claude Code and undocumented, so a Claude Code
+> update may break ccs. Please open an issue if it does.
 
-Instalación: `ln -sf $PWD/ccs.py ~/.local/bin/ccs` · Tests: `python3 -m unittest`
+## Development
 
-Licencia: MIT.
+```sh
+python3 -m unittest                                                   # tests
+uv build                                                              # sdist + wheel
+uv run --no-project --with pyte --with rich python scripts/screenshot.py   # regenerate docs/screenshot.svg
+```
+
+Versioning follows [semver](https://semver.org); releases are tagged `vX.Y.Z` and the version lives in
+`ccs.__version__` (`ccs --version`).
+
+## License
+
+MIT
