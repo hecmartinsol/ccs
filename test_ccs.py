@@ -336,6 +336,12 @@ class TrashTest(unittest.TestCase):
             self.assertFalse(os.path.exists(path))
             self.assertFalse(os.path.exists(os.path.join(proj, "abc")))
 
+    def test_running(self):
+        s = {"id": "a", "agent": None}
+        self.assertTrue(ccs.running(s, {"a"}))
+        self.assertFalse(ccs.running(s, set()))
+        self.assertTrue(ccs.running({"id": "b", "agent": {"pid": os.getpid()}}, set()))
+
     def test_live_session_ids(self):
         with tempfile.TemporaryDirectory() as d:
             for name, pid in (("1", os.getpid()), ("2", 2 ** 22 + 12345)):

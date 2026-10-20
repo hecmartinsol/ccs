@@ -77,7 +77,7 @@ Teclas:
 | `p` | popup de proyectos: escribe para filtrar, ↑↓ + Enter, Esc limpia/cierra |
 | `x` | limpiar filtros |
 | `Tab` | rota local → crons (`sdk-cli`, `claude -p`) → agentes en segundo plano (`claude agents`; `●` = activo, Enter hace attach) |
-| `Enter` | `cd` a la carpeta + `claude --resume <id>` |
+| `Enter` | `cd` a la carpeta + `claude --resume <id>` (las marcadas con `●` ya están en marcha: se rechaza, salvo agentes, que hacen attach) |
 | `q` / `Esc` | salir |
 
 Índice cacheado en `~/.cache/ccs/index.json`; solo reparsea ficheros cuyo mtime/tamaño cambió.

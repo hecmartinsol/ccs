@@ -258,6 +258,12 @@ def live_session_ids(sessions_dir=SESSIONS_DIR):
     return ids
 
 
+def running(session, live_ids):
+    """True if the session has a live Claude Code process (interactive or background agent)."""
+    agent = session.get("agent")
+    return session["id"] in live_ids or bool(agent and is_alive(agent))
+
+
 def trash_session(path, trash_dir=TRASH_DIR):
     """Move a session transcript (and its <id>/ side folder, if any) into the trash.
     Returns the new path of the transcript."""
@@ -573,6 +579,7 @@ def run_ui(stdscr, sessions, query, project=None):
         base = [s for s in mode_rows(sessions, MODES[mode])
                 if show_hidden or not is_hidden(s["project"])]
         rows = pin_favorites(sort_rows(filter_rows(base, query, project), sort_col, sort_desc))
+        live_ids = live_session_ids()
         if follow:
             sel = next((i for i, r in enumerate(rows) if r["id"] == follow), sel)
             follow = None
@@ -617,7 +624,7 @@ def run_ui(stdscr, sessions, query, project=None):
             put(stdscr, 1, x, fit(name, n), attr)
             x += n + 1
         for i, r in enumerate(rows[top:top + list_h]):
-            live = "● " if r["agent"] and is_alive(r["agent"]) else ""
+            live = "● " if running(r, live_ids) else ""
             cells = [f"{project_emoji(r['project'])} {r['project']}", ("★ " if r["id"] in FAVORITES else "") + live + (r["title"] or r["id"][:8]),
                      r["first"], rel_time(r["created"]), rel_time(r["updated"])]
             attr = curses.color_pair(1) if top + i == sel else curses.A_NORMAL
@@ -710,7 +717,7 @@ def run_ui(stdscr, sessions, query, project=None):
             if not rows:
                 continue
             r = rows[sel]
-            if r["id"] in live_session_ids() or (r["agent"] and is_alive(r["agent"])):
+            if running(r, live_ids):
                 msg = "Session is running, not deleting it"
                 continue
             if confirm(stdscr, f"Move “{(r['title'] or r['id'][:8])[:40]}” to trash?"):
@@ -746,6 +753,9 @@ def run_ui(stdscr, sessions, query, project=None):
             if not rows:
                 continue
             r = rows[sel]
+            if running(r, live_ids) and not r["agent"]:
+                msg = "Already open in another terminal"
+                continue
             if not os.path.isdir(r["cwd"]):
                 msg = f"Folder {r['cwd']} no longer exists"
                 continue

@@ -54,7 +54,7 @@ ln -sf "$PWD/ccs.py" ~/.local/bin/ccs
 | `p` | project picker: type to filter, ↑↓ + Enter, Esc clears/closes |
 | `x` | clear filters |
 | `Tab` | cycle local → crons (`sdk-cli`, `claude -p`) → background agents (`claude agents`; `●` = running, Enter attaches) |
-| `Enter` | `cd` to the folder + `claude --resume <id>` |
+| `Enter` | `cd` to the folder + `claude --resume <id>` (sessions marked `●` are already running: refused, except agents, which are attached) |
 | `q` / `Esc` | quit |
 
 ## Projects and emojis
