@@ -52,6 +52,7 @@ ln -sf "$PWD/ccs.py" ~/.local/bin/ccs
 | `*` | pin/unpin the session (★, stays on top; saved as `favorites` in the config) |
 | `H` | show/hide projects matched by `hidden` |
 | `p` | project picker: type to filter, ↑↓ + Enter, Esc clears/closes |
+| `R` | refresh now (the list also refreshes itself every 30 s; the header shows a `⟳` countdown) |
 | `x` | clear filters |
 | `Tab` | cycle local → crons (`sdk-cli`, `claude -p`) → background agents (`claude agents`; `●` = running, Enter attaches) |
 | `Enter` | `cd` to the folder + `claude --resume <id>` (sessions marked `●` are already running: refused, except agents, which are attached) |

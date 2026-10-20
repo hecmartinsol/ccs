@@ -75,6 +75,7 @@ Teclas:
 | `*` | fijar/desfijar la sesión (★, queda arriba; se guarda como `favorites` en la config) |
 | `H` | mostrar/ocultar los proyectos de `hidden` |
 | `p` | popup de proyectos: escribe para filtrar, ↑↓ + Enter, Esc limpia/cierra |
+| `R` | refrescar ya (la lista también se refresca sola cada 30 s; la cabecera muestra una cuenta atrás `⟳`) |
 | `x` | limpiar filtros |
 | `Tab` | rota local → crons (`sdk-cli`, `claude -p`) → agentes en segundo plano (`claude agents`; `●` = activo, Enter hace attach) |
 | `Enter` | `cd` a la carpeta + `claude --resume <id>` (las marcadas con `●` ya están en marcha: se rechaza, salvo agentes, que hacen attach) |

@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import textwrap
+import time
 import unicodedata
 import zlib
 from datetime import datetime, timezone
@@ -31,6 +32,7 @@ TRASH_DIR = os.path.join(
     os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")), "ccs", "trash"
 )
 CACHE_VERSION = 3
+REFRESH_SECS = 30
 MAX_TEXT = 300
 
 NOISE_PREFIXES = ("<system-reminder>", "<local-command", "<bash-", "Caveat:", "<task-notification>",
@@ -560,7 +562,27 @@ def pick_project(stdscr, rows, current):
             text, sel = text + k, 0
 
 
-def run_ui(stdscr, sessions, query, project=None):
+def build_sessions(progress=None):
+    """Sessions with their project and background-agent info attached."""
+    sessions = load_sessions(progress=progress)
+    agents = load_agents()
+    for s in sessions:
+        s["project"] = project_key(s["cwd"])
+        s["agent"] = agents.get(s["id"])
+    return sessions
+
+
+def reload_all(progress=None):
+    """Re-read the config (if it parses) and the sessions."""
+    try:
+        apply_config(load_config())
+    except SystemExit:
+        pass                            # keep the previous config while the file is mid-edit
+    return build_sessions(progress)
+
+
+def run_ui(stdscr, sessions, query, project=None, reload=None):
+    """`reload` () -> new session list; when given, the list refreshes every REFRESH_SECS."""
     curses.curs_set(0)
     curses.use_default_colors()
     curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_CYAN)   # selection
@@ -575,7 +597,15 @@ def run_ui(stdscr, sessions, query, project=None):
     saved_query = ""
     sel = top = 0
     msg = ""
+    cur_id = None
+    if reload:
+        stdscr.timeout(1000)            # wake up every second to tick the countdown
+    next_refresh = time.monotonic() + REFRESH_SECS
     while True:
+        if reload and time.monotonic() >= next_refresh:
+            sessions[:] = reload()
+            follow = cur_id
+            next_refresh = time.monotonic() + REFRESH_SECS
         base = [s for s in mode_rows(sessions, MODES[mode])
                 if show_hidden or not is_hidden(s["project"])]
         rows = pin_favorites(sort_rows(filter_rows(base, query, project), sort_col, sort_desc))
@@ -587,6 +617,7 @@ def run_ui(stdscr, sessions, query, project=None):
         detail_h = 5
         list_h = max(1, h - 3 - detail_h)
         sel = max(0, min(sel, len(rows) - 1))
+        cur_id = rows[sel]["id"] if rows else None
         if sel < top:
             top = sel
         elif sel >= top + list_h:
@@ -611,6 +642,8 @@ def run_ui(stdscr, sessions, query, project=None):
             filters.append("+hidden")
         head = "  ".join(filters) or "ccs"
         info = f"{len(rows)}/{len(base)} {MODES[mode]}"
+        if reload:
+            info += f"  ⟳ {max(0, int(next_refresh - time.monotonic() + 0.99))}s"
         gap = w - 1 - disp_width(head) - len(info)
         put(stdscr, 0, 0, head + " " * gap + info if gap >= 2 else head,
             curses.A_BOLD | (curses.color_pair(3) if filters else 0))
@@ -711,6 +744,8 @@ def run_ui(stdscr, sessions, query, project=None):
                 msg = "Pinned ★" if now else "Unpinned"
             except (OSError, SystemExit) as e:
                 msg = f"Config not saved: {e}"
+        elif k == "R" and reload:
+            next_refresh = 0
         elif k == "H":
             show_hidden, sel = not show_hidden, 0
         elif k == "d":
@@ -781,18 +816,13 @@ def main(argv):
         sys.stderr.write(f"\rindexing sessions… {i}/{n}")
         sys.stderr.flush()
 
-    sessions = load_sessions(progress=progress)
+    sessions = build_sessions(progress)
     sys.stderr.write("\r\033[K")
-    for s in sessions:
-        s["project"] = project_key(s["cwd"])
-    agents = load_agents()
-    for s in sessions:
-        s["agent"] = agents.get(s["id"])
     if not sessions:
         print("No sessions found in", PROJECTS_DIR)
         return 1
     os.environ.setdefault("ESCDELAY", "25")
-    chosen = curses.wrapper(run_ui, sessions, query, project)
+    chosen = curses.wrapper(run_ui, sessions, query, project, reload_all)
     if not chosen:
         return 0
     cmd = ["claude", "--resume", chosen["id"]]

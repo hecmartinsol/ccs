@@ -352,6 +352,21 @@ class TrashTest(unittest.TestCase):
             self.assertEqual(ccs.live_session_ids(d), {"s1"})
 
 
+class ReloadTest(unittest.TestCase):
+    def test_build_sessions_attaches_project_and_agent(self):
+        raw = [{"id": "a", "cwd": "/home/x/shop"}, {"id": "b", "cwd": "/home/x/api"}]
+        with mock.patch.object(ccs, "load_sessions", return_value=raw), \
+                mock.patch.object(ccs, "load_agents", return_value={"b": {"pid": 1}}):
+            out = ccs.build_sessions()
+        self.assertEqual([(s["project"], s["agent"]) for s in out],
+                         [("shop", None), ("api", {"pid": 1})])
+
+    def test_reload_all_survives_broken_config(self):
+        with mock.patch.object(ccs, "load_config", side_effect=SystemExit("bad")), \
+                mock.patch.object(ccs, "build_sessions", return_value=["ok"]):
+            self.assertEqual(ccs.reload_all(), ["ok"])
+
+
 class SortRowsTest(unittest.TestCase):
     R = [
         {"id": "1", "project": "b", "title": "", "first": "z", "created": "2", "updated": "9"},
