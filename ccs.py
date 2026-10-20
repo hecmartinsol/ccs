@@ -328,26 +328,19 @@ def terminal_prefix(env=None):
     return None
 
 
-def spawn(argv, cwd, where, env=None):
-    """Open `argv` in `cwd` in a new terminal window or tmux window, without leaving ccs.
-    Returns a status message."""
-    env = os.environ if env is None else env
-    if where == "tmux":
-        if not env.get("TMUX"):
-            return "Not inside tmux"
-        full = ["tmux", "new-window", "-c", cwd, *argv]
-    else:
-        prefix = terminal_prefix(env)
-        if not prefix:
-            return "No terminal found: set \"terminal\" in the config (e.g. \"ghostty -e\")"
-        # cd first: some emulators (gnome-terminal) ignore the working directory of the caller
-        full = [*prefix, "sh", "-c", 'cd "$0" && exec "$@"', cwd, *argv]
+def spawn(argv, cwd, env=None):
+    """Open `argv` in `cwd` in a new terminal window, without leaving ccs. Returns a status message."""
+    prefix = terminal_prefix(env)
+    if not prefix:
+        return "No terminal found: set \"terminal\" in the config (e.g. \"ghostty -e\")"
+    # cd first: some emulators (gnome-terminal) ignore the working directory of the caller
+    full = [*prefix, "sh", "-c", 'cd "$0" && exec "$@"', cwd, *argv]
     try:
         subprocess.Popen(full, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError as e:
         return f"Could not start {full[0]}: {e.strerror or e}"
-    return f"Opened in {'tmux' if where == 'tmux' else os.path.basename(full[0])}"
+    return f"Opened in {os.path.basename(full[0])}"
 
 
 def trash_session(path, trash_dir=TRASH_DIR):
@@ -534,9 +527,9 @@ def fit(text, width):
     return text + " " * (width - disp_width(text))
 
 
-HELP = [("↑↓", "move"), ("Enter", "resume"), ("Space", "preview"), ("^T", "tmux"), ("^J", "window"), ("/", "search"),
+HELP = [("↑↓", "move"), ("Enter", "resume"), ("Space", "preview"), ("^J", "window"), ("/", "search"),
         ("s", "sort"), ("p", "project"), ("r", "rename"), ("d", "trash"), ("*", "pin"),
-        ("H", "hidden"), ("R", "refresh"), ("x", "clear"), ("Tab", "view"), ("q", "quit")]
+        ("^H", "hidden"), ("^R", "refresh"), ("x", "clear"), ("Tab", "view"), ("q", "quit")]
 HELP_SORT = [("←→", "column"), ("↑", "asc"), ("↓", "desc"), ("Enter/Esc/s", "done")]
 HELP_SEARCH = [("type", "to filter"), ("↑↓", "move"), ("Enter", "accept"), ("Esc", "cancel")]
 
@@ -938,9 +931,9 @@ def run_ui(stdscr, sessions, query, project=None, reload=None):
                 msg = "Pinned ★" if now else "Unpinned"
             except (OSError, SystemExit) as e:
                 msg = f"Config not saved: {e}"
-        elif k == "R" and reload:
+        elif k == "\x12" and reload:                 # Ctrl-R
             next_refresh = 0
-        elif k == "H":
+        elif k == "\x08":                         # Ctrl-H
             show_hidden, sel = not show_hidden, 0
         elif k == "d":
             if not rows:
@@ -978,7 +971,7 @@ def run_ui(stdscr, sessions, query, project=None, reload=None):
             mode, sel = (mode + 1) % len(MODES), 0
         elif k in ("q", "\x1b"):
             return None
-        elif k in ("\n", "\r", curses.KEY_ENTER, "\x14"):
+        elif k in ("\n", "\r", curses.KEY_ENTER):
             if not rows:
                 continue
             r = rows[sel]
@@ -990,7 +983,7 @@ def run_ui(stdscr, sessions, query, project=None, reload=None):
                 continue
             if k in ("\r", curses.KEY_ENTER):
                 return r
-            msg = spawn(session_command(r), r["cwd"], "tmux" if k == "\x14" else "window")
+            msg = spawn(session_command(r), r["cwd"])
 
 
 def main(argv):

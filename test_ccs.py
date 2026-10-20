@@ -387,24 +387,20 @@ class LaunchTest(unittest.TestCase):
             ccs.apply_config({})
             self.assertIsNone(ccs.terminal_prefix({}))
 
-    def test_spawn_window_and_tmux(self):
+    def test_spawn_window(self):
         ccs.apply_config({"terminal": "term -e"})
         with mock.patch.object(ccs.subprocess, "Popen") as popen:
-            msg = ccs.spawn(["claude", "--resume", "a"], "/w", "window", env={})
+            msg = ccs.spawn(["claude", "--resume", "a"], "/w", env={})
             full = popen.call_args[0][0]
             self.assertEqual(full[:2], ["term", "-e"])
             self.assertEqual(full[-4:], ["/w", "claude", "--resume", "a"])
             self.assertEqual(popen.call_args[1]["cwd"], "/w")
             self.assertIn("term", msg)
-            self.assertEqual(ccs.spawn(["claude"], "/w", "tmux", env={}), "Not inside tmux")
-            ccs.spawn(["claude", "x"], "/w", "tmux", env={"TMUX": "1"})
-            self.assertEqual(popen.call_args[0][0],
-                             ["tmux", "new-window", "-c", "/w", "claude", "x"])
 
     def test_spawn_reports_missing_binary(self):
         ccs.apply_config({"terminal": "nope -e"})
         with mock.patch.object(ccs.subprocess, "Popen", side_effect=FileNotFoundError(2, "No such file")):
-            self.assertIn("Could not start nope", ccs.spawn(["claude"], "/w", "window", env={}))
+            self.assertIn("Could not start nope", ccs.spawn(["claude"], "/w", env={}))
 
 
 class PreviewTest(unittest.TestCase):

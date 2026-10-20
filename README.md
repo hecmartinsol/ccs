@@ -50,14 +50,13 @@ ln -sf "$PWD/ccs.py" ~/.local/bin/ccs
 | `r` | rename the session (writes the same title as `/rename`) |
 | `d` | move the session to the trash (asks `y/N`; refuses running sessions). Restore by moving the file back from `~/.local/share/ccs/trash/` |
 | `*` | pin/unpin the session (★, stays on top; saved as `favorites` in the config) |
-| `H` | show/hide projects matched by `hidden` |
+| `Ctrl-H` | show/hide projects matched by `hidden` |
 | `p` | project picker: type to filter, ↑↓ + Enter, Esc clears/closes |
-| `R` | refresh now (the list also refreshes itself every 30 s; the header shows a `⟳` countdown) |
+| `Ctrl-R` | refresh now (the list also refreshes itself every 30 s; the header shows a `⟳` countdown) |
 | `x` | clear filters |
 | `Tab` | cycle local → crons (`sdk-cli`, `claude -p`) → background agents (`claude agents`; `●` = running, Enter attaches) |
 | `Space` | full-screen reader of the conversation (last 100 messages), opened at the end: ↑↓ jump between question/answer, PgUp/PgDn scroll, g/G first/last, Space/Esc closes |
 | `Ctrl-J` (`Ctrl-Enter` where the terminal sends it) | open the session in a new terminal window, leaving ccs open (`terminal` in the config, else auto-detected) |
-| `Ctrl-T` | open the session in a new tmux window (only inside tmux) |
 | `Enter` | `cd` to the folder + `claude --resume <id>` (sessions marked `●` are already running: refused, except agents, which are attached) |
 | `q` / `Esc` | quit |
 

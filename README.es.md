@@ -76,14 +76,13 @@ Teclas:
 | `r` | renombrar la sesión (escribe el mismo título que `/rename`) |
 | `d` | mover la sesión a la papelera (pide `y/N`; rechaza sesiones en curso). Restaurar: devolver el fichero desde `~/.local/share/ccs/trash/` |
 | `*` | fijar/desfijar la sesión (★, queda arriba; se guarda como `favorites` en la config) |
-| `H` | mostrar/ocultar los proyectos de `hidden` |
+| `Ctrl-H` | mostrar/ocultar los proyectos de `hidden` |
 | `p` | popup de proyectos: escribe para filtrar, ↑↓ + Enter, Esc limpia/cierra |
-| `R` | refrescar ya (la lista también se refresca sola cada 30 s; la cabecera muestra una cuenta atrás `⟳`) |
+| `Ctrl-R` | refrescar ya (la lista también se refresca sola cada 30 s; la cabecera muestra una cuenta atrás `⟳`) |
 | `x` | limpiar filtros |
 | `Tab` | rota local → crons (`sdk-cli`, `claude -p`) → agentes en segundo plano (`claude agents`; `●` = activo, Enter hace attach) |
 | `Space` | lector a pantalla completa de la conversación (últimos 100 mensajes), abierto al final: ↑↓ saltan entre pregunta/respuesta, PgUp/PgDn desplazan, g/G primera/última, Space/Esc cierra |
 | `Ctrl-J` (`Ctrl-Enter` si la terminal lo envía) | abrir la sesión en una ventana de terminal nueva sin cerrar ccs (`terminal` en la config, si no se autodetecta) |
-| `Ctrl-T` | abrir la sesión en una ventana nueva de tmux (solo dentro de tmux) |
 | `Enter` | `cd` a la carpeta + `claude --resume <id>` (las marcadas con `●` ya están en marcha: se rechaza, salvo agentes, que hacen attach) |
 | `q` / `Esc` | salir |
 
