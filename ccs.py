@@ -6,11 +6,13 @@ Enter does chdir to the session's folder + `claude --resume <id>`.
 No dependencies: stdlib only (curses).
 """
 import curses
+import fnmatch
 import glob
 import json
 import locale
 import os
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -23,6 +25,10 @@ __version__ = "0.1.0"
 PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 CACHE_FILE = os.path.join(
     os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "ccs", "index.json"
+)
+SESSIONS_DIR = os.path.expanduser("~/.claude/sessions")
+TRASH_DIR = os.path.join(
+    os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")), "ccs", "trash"
 )
 CACHE_VERSION = 3
 MAX_TEXT = 300
@@ -217,6 +223,54 @@ def sort_rows(rows, col, desc):
     return sorted(rows, key=SORT_KEYS[col], reverse=desc)
 
 
+def pin_favorites(rows):
+    """Favorites first, keeping the current order inside each group."""
+    return sorted(rows, key=lambda r: r["id"] not in FAVORITES)
+
+
+def is_hidden(project):
+    name = project.lower()
+    return any(fnmatch.fnmatchcase(name, p) for p in HIDDEN)
+
+
+def toggle_favorite(session_id):
+    """Flip a session in FAVORITES and persist it. Returns True if it is now a favorite."""
+    favs = [i for i in FAVORITES if i != session_id]
+    now = len(favs) == len(FAVORITES)
+    if now:
+        favs.append(session_id)
+    save_config({"favorites": favs})
+    FAVORITES[:] = favs
+    return now
+
+
+def live_session_ids(sessions_dir=SESSIONS_DIR):
+    """Ids of sessions with a running Claude Code process."""
+    ids = set()
+    for path in glob.glob(os.path.join(glob.escape(sessions_dir), "*.json")):
+        try:
+            with open(path) as f:
+                info = json.load(f)
+            if is_alive(info):
+                ids.add(info["sessionId"])
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    return ids
+
+
+def trash_session(path, trash_dir=TRASH_DIR):
+    """Move a session transcript (and its <id>/ side folder, if any) into the trash.
+    Returns the new path of the transcript."""
+    dest_dir = os.path.join(trash_dir, os.path.basename(os.path.dirname(path)))
+    os.makedirs(dest_dir, exist_ok=True)
+    side = path[:-len(".jsonl")]
+    if os.path.isdir(side):
+        shutil.move(side, os.path.join(dest_dir, os.path.basename(side)))
+    dest = os.path.join(dest_dir, os.path.basename(path))
+    shutil.move(path, dest)
+    return dest
+
+
 # ---------------------------------------------------------------- projects
 
 CONFIG_FILE = os.path.join(
@@ -241,6 +295,8 @@ EMOJI_POOL = ["🔵", "🟣", "🟠", "🟡", "🟤", "🔶", "🔷", "🍀", "�
               "🦉", "🍉", "🍋", "🌈", "⭐", "🎲", "🧩", "🛸", "🐳", "🦀", "🍄", "🌻"]
 
 WORKSPACES = []
+HIDDEN = []
+FAVORITES = []
 EMOJIS = dict(DEFAULT_EMOJIS)
 RULES = list(DEFAULT_RULES)
 
@@ -256,10 +312,26 @@ def load_config(path=CONFIG_FILE):
         raise SystemExit(f"ccs: invalid config in {path}: {e}")
 
 
+def save_config(updates, path=None):
+    """Merge `updates` into the user config file (other keys are kept)."""
+    path = path or CONFIG_FILE
+    cfg = load_config(path)
+    cfg.update(updates)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp, path)
+
+
 def apply_config(cfg):
     """workspaces: folders whose top-level children are projects.
-    emojis: {project: emoji}.  rules: [[substring, emoji], ...] (before the built-in ones)."""
-    global WORKSPACES, EMOJIS, RULES
+    emojis: {project: emoji}.  rules: [[substring, emoji], ...] (before the built-in ones).
+    hidden: project-name patterns (fnmatch) to leave out.  favorites: session ids pinned on top."""
+    global WORKSPACES, EMOJIS, RULES, HIDDEN, FAVORITES
+    HIDDEN = [str(p).lower() for p in cfg.get("hidden", [])]
+    FAVORITES = [str(i) for i in cfg.get("favorites", [])]
     WORKSPACES = [os.path.expanduser(w).rstrip("/") for w in cfg.get("workspaces", [])]
     EMOJIS = {**DEFAULT_EMOJIS, **cfg.get("emojis", {})}
     RULES = [tuple(r) for r in cfg.get("rules", [])] + DEFAULT_RULES
@@ -367,7 +439,8 @@ def fit(text, width):
     return text + " " * (width - disp_width(text))
 
 
-HELP = "↑↓/jk move · / search · s sort · r rename · p project (type to filter) · x clear filters · Tab local/crons/agents · Enter resume · q quit"
+HELP = ("↑↓ move · / search · s sort · p project · r rename · d trash · * pin · H hidden · "
+        "x clear · Tab view · Enter resume · q quit")
 HELP_SORT = "←→ column · ↑ asc · ↓ desc · Enter/Esc/s done"
 HELP_SEARCH = "type to filter · ↑↓ move · Enter accept · Esc cancel"
 
@@ -406,6 +479,22 @@ def prompt_text(stdscr, label, initial=""):
             text = ""
         elif isinstance(k, str) and k.isprintable():
             text += k
+
+
+def confirm(stdscr, text):
+    """Yes/no question on the bottom row; only `y` means yes."""
+    h, w = stdscr.getmaxyx()
+    stdscr.move(h - 1, 0)
+    stdscr.clrtoeol()
+    put(stdscr, h - 1, 0, f"{text} (y/N)", curses.color_pair(3) | curses.A_BOLD)
+    stdscr.refresh()
+    while True:
+        try:
+            k = stdscr.get_wch()
+        except curses.error:
+            continue
+        if k != curses.KEY_RESIZE:
+            return k in ("y", "Y")
 
 
 def pick_project(stdscr, rows, current):
@@ -474,13 +563,19 @@ def run_ui(stdscr, sessions, query, project=None):
     mode = 0
     searching = False
     sorting = False
+    show_hidden = False
+    follow = None                       # session id the selection should stick to
     sort_col, sort_desc = 4, True       # UPDATED, newest first
     saved_query = ""
     sel = top = 0
     msg = ""
     while True:
-        base = mode_rows(sessions, MODES[mode])
-        rows = sort_rows(filter_rows(base, query, project), sort_col, sort_desc)
+        base = [s for s in mode_rows(sessions, MODES[mode])
+                if show_hidden or not is_hidden(s["project"])]
+        rows = pin_favorites(sort_rows(filter_rows(base, query, project), sort_col, sort_desc))
+        if follow:
+            sel = next((i for i, r in enumerate(rows) if r["id"] == follow), sel)
+            follow = None
         h, w = stdscr.getmaxyx()
         detail_h = 5
         list_h = max(1, h - 3 - detail_h)
@@ -505,6 +600,8 @@ def run_ui(stdscr, sessions, query, project=None):
             filters.append(f"/{query}" + ("_" if searching else ""))
         if project:
             filters.append(f"{project_emoji(project)} {project}")
+        if show_hidden and HIDDEN:
+            filters.append("+hidden")
         head = "  ".join(filters) or "ccs"
         info = f"{len(rows)}/{len(base)} {MODES[mode]}"
         gap = w - 1 - disp_width(head) - len(info)
@@ -521,7 +618,7 @@ def run_ui(stdscr, sessions, query, project=None):
             x += n + 1
         for i, r in enumerate(rows[top:top + list_h]):
             live = "● " if r["agent"] and is_alive(r["agent"]) else ""
-            cells = [f"{project_emoji(r['project'])} {r['project']}", live + (r["title"] or r["id"][:8]),
+            cells = [f"{project_emoji(r['project'])} {r['project']}", ("★ " if r["id"] in FAVORITES else "") + live + (r["title"] or r["id"][:8]),
                      r["first"], rel_time(r["created"]), rel_time(r["updated"])]
             attr = curses.color_pair(1) if top + i == sel else curses.A_NORMAL
             put(stdscr, 2 + i, 0, line(cells), attr)
@@ -598,6 +695,31 @@ def run_ui(stdscr, sessions, query, project=None):
             searching, saved_query = True, query
         elif k == "s":
             sorting, sel = True, 0
+        elif k == "*":
+            if not rows:
+                continue
+            try:
+                follow = rows[sel]["id"]
+                now = toggle_favorite(follow)
+                msg = "Pinned ★" if now else "Unpinned"
+            except (OSError, SystemExit) as e:
+                msg = f"Config not saved: {e}"
+        elif k == "H":
+            show_hidden, sel = not show_hidden, 0
+        elif k == "d":
+            if not rows:
+                continue
+            r = rows[sel]
+            if r["id"] in live_session_ids() or (r["agent"] and is_alive(r["agent"])):
+                msg = "Session is running, not deleting it"
+                continue
+            if confirm(stdscr, f"Move “{(r['title'] or r['id'][:8])[:40]}” to trash?"):
+                try:
+                    dest = trash_session(r["path"])
+                    sessions.remove(r)
+                    msg = f"Moved to {short_path(dest)}"
+                except OSError as e:
+                    msg = f"Delete failed: {e.strerror or e}"
         elif k == "r":
             if not rows:
                 continue

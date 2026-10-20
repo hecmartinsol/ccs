@@ -54,9 +54,14 @@ ln -sf "$PWD/ccs.py" ~/.local/bin/ccs
 {
   "workspaces": ["~/projects", "~/work"],
   "emojis": { "my-main-repo": "🟢", "side-project": "🪙" },
-  "rules": [["shop", "🛒"]]
+  "rules": [["shop", "🛒"]],
+  "hidden": ["tmp", "scratch*"],
+  "favorites": []
 }
 ```
+
+`hidden` acepta patrones de nombre de proyecto (comodines `*` y `?`, sin distinguir mayúsculas).
+`favorites` lo gestiona la tecla `*` (ids de sesión).
 
 Teclas:
 
@@ -66,6 +71,9 @@ Teclas:
 | `/` | búsqueda de texto libre (Enter acepta, Esc cancela) |
 | `s` | ordenar: ←→ elegir columna, ↑ asc, ↓ desc, Enter/Esc terminar |
 | `r` | renombrar la sesión (escribe el mismo título que `/rename`) |
+| `d` | mover la sesión a la papelera (pide `y/N`; rechaza sesiones en curso). Restaurar: devolver el fichero desde `~/.local/share/ccs/trash/` |
+| `*` | fijar/desfijar la sesión (★, queda arriba; se guarda como `favorites` en la config) |
+| `H` | mostrar/ocultar los proyectos de `hidden` |
 | `p` | popup de proyectos: escribe para filtrar, ↑↓ + Enter, Esc limpia/cierra |
 | `x` | limpiar filtros |
 | `Tab` | rota local → crons (`sdk-cli`, `claude -p`) → agentes en segundo plano (`claude agents`; `●` = activo, Enter hace attach) |

@@ -288,6 +288,64 @@ class RenameTest(unittest.TestCase):
             self.assertEqual(second["prompts"], 1)
 
 
+class ConfigFeaturesTest(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.TemporaryDirectory()
+        self.addCleanup(self.d.cleanup)
+        self.cfg = os.path.join(self.d.name, "sub", "config.json")
+        p = mock.patch.object(ccs, "CONFIG_FILE", self.cfg)
+        p.start()
+        self.addCleanup(p.stop)
+        self.addCleanup(ccs.apply_config, {})
+
+    def test_hidden_patterns(self):
+        ccs.apply_config({"hidden": ["tmp", "Scratch*"]})
+        self.assertTrue(ccs.is_hidden("tmp"))
+        self.assertTrue(ccs.is_hidden("scratch-2"))
+        self.assertFalse(ccs.is_hidden("tmp2"))
+        self.assertFalse(ccs.is_hidden("shop"))
+
+    def test_save_config_keeps_other_keys(self):
+        os.makedirs(os.path.dirname(self.cfg))
+        with open(self.cfg, "w") as f:
+            json.dump({"workspaces": ["~/w"]}, f)
+        ccs.save_config({"favorites": ["a"]})
+        self.assertEqual(ccs.load_config(self.cfg), {"workspaces": ["~/w"], "favorites": ["a"]})
+
+    def test_toggle_favorite_persists_and_pins(self):
+        ccs.apply_config({})
+        self.assertTrue(ccs.toggle_favorite("b"))
+        self.assertEqual(ccs.load_config(self.cfg)["favorites"], ["b"])
+        rows = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+        self.assertEqual([r["id"] for r in ccs.pin_favorites(rows)], ["b", "a", "c"])
+        self.assertFalse(ccs.toggle_favorite("b"))
+        self.assertEqual(ccs.load_config(self.cfg)["favorites"], [])
+
+
+class TrashTest(unittest.TestCase):
+    def test_moves_transcript_and_side_folder(self):
+        with tempfile.TemporaryDirectory() as d:
+            proj = os.path.join(d, "projects", "-home-x")
+            os.makedirs(os.path.join(proj, "abc", "subagents"))
+            path = os.path.join(proj, "abc.jsonl")
+            write_jsonl(path, [user("hola", "2026-01-01T00:00:00Z")])
+            trash = os.path.join(d, "trash")
+            dest = ccs.trash_session(path, trash)
+            self.assertEqual(dest, os.path.join(trash, "-home-x", "abc.jsonl"))
+            self.assertTrue(os.path.isdir(os.path.join(trash, "-home-x", "abc", "subagents")))
+            self.assertFalse(os.path.exists(path))
+            self.assertFalse(os.path.exists(os.path.join(proj, "abc")))
+
+    def test_live_session_ids(self):
+        with tempfile.TemporaryDirectory() as d:
+            for name, pid in (("1", os.getpid()), ("2", 2 ** 22 + 12345)):
+                with open(os.path.join(d, name + ".json"), "w") as f:
+                    json.dump({"pid": pid, "sessionId": "s" + name}, f)
+            with open(os.path.join(d, "bad.json"), "w") as f:
+                f.write("{")
+            self.assertEqual(ccs.live_session_ids(d), {"s1"})
+
+
 class SortRowsTest(unittest.TestCase):
     R = [
         {"id": "1", "project": "b", "title": "", "first": "z", "created": "2", "updated": "9"},

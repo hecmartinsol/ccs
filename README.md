@@ -48,6 +48,9 @@ ln -sf "$PWD/ccs.py" ~/.local/bin/ccs
 | `/` | free-text search (Enter accepts, Esc cancels) |
 | `s` | sort: ←→ pick column, ↑ asc, ↓ desc, Enter/Esc done |
 | `r` | rename the session (writes the same title as `/rename`) |
+| `d` | move the session to the trash (asks `y/N`; refuses running sessions). Restore by moving the file back from `~/.local/share/ccs/trash/` |
+| `*` | pin/unpin the session (★, stays on top; saved as `favorites` in the config) |
+| `H` | show/hide projects matched by `hidden` |
 | `p` | project picker: type to filter, ↑↓ + Enter, Esc clears/closes |
 | `x` | clear filters |
 | `Tab` | cycle local → crons (`sdk-cli`, `claude -p`) → background agents (`claude agents`; `●` = running, Enter attaches) |
@@ -72,9 +75,14 @@ rules (`voice` → 🎤, `doc` → 📁, `api` → 🔌…); otherwise one from 
 {
   "workspaces": ["~/projects", "~/work"],
   "emojis": { "my-main-repo": "🟢", "side-project": "🪙" },
-  "rules": [["shop", "🛒"]]
+  "rules": [["shop", "🛒"]],
+  "hidden": ["tmp", "scratch*"],
+  "favorites": []
 }
 ```
+
+`hidden` takes project-name patterns (`*` and `?` wildcards, case-insensitive). `favorites` is managed
+by the `*` key (session ids).
 
 ## How it works
 

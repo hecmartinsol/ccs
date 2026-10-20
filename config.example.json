@@ -1,10 +1,20 @@
 {
-  "workspaces": ["~/projects", "~/work"],
+  "workspaces": [
+    "~/projects",
+    "~/work"
+  ],
   "emojis": {
     "my-main-repo": "🟢",
     "side-project": "🪙"
   },
   "rules": [
-    ["shop", "🛒"]
+    [
+      "shop",
+      "🛒"
+    ]
+  ],
+  "hidden": [
+    "tmp",
+    "scratch*"
   ]
 }
