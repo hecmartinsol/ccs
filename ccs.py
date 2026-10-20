@@ -189,6 +189,20 @@ def mode_rows(sessions, mode):
     return [s for s in sessions if not s.get("agent") and (s["entrypoint"] == "sdk-cli") == crons]
 
 
+COLUMNS = ("PROJECT", "SESSION", "DESCRIPTION", "CREATED", "UPDATED")
+SORT_KEYS = (
+    lambda r: r["project"].lower(),
+    lambda r: (r["title"] or r["id"]).lower(),
+    lambda r: r["first"].lower(),
+    lambda r: r["created"],
+    lambda r: r["updated"],
+)
+
+
+def sort_rows(rows, col, desc):
+    return sorted(rows, key=SORT_KEYS[col], reverse=desc)
+
+
 # ---------------------------------------------------------------- projects
 
 CONFIG_FILE = os.path.join(
@@ -339,7 +353,8 @@ def fit(text, width):
     return text + " " * (width - disp_width(text))
 
 
-HELP = "↑↓/jk move · / search · p project (type to filter) · x clear filters · Tab local/crons/agents · Enter resume · q quit"
+HELP = "↑↓/jk move · / search · s sort · p project (type to filter) · x clear filters · Tab local/crons/agents · Enter resume · q quit"
+HELP_SORT = "←→ column · ↑ asc · ↓ desc · Enter/Esc/s done"
 HELP_SEARCH = "type to filter · ↑↓ move · Enter accept · Esc cancel"
 
 
@@ -418,12 +433,14 @@ def run_ui(stdscr, sessions, query, project=None):
     curses.init_pair(3, curses.COLOR_YELLOW, -1)                 # warning / filters
     mode = 0
     searching = False
+    sorting = False
+    sort_col, sort_desc = 4, True       # UPDATED, newest first
     saved_query = ""
     sel = top = 0
     msg = ""
     while True:
         base = mode_rows(sessions, MODES[mode])
-        rows = filter_rows(base, query, project)
+        rows = sort_rows(filter_rows(base, query, project), sort_col, sort_desc)
         h, w = stdscr.getmaxyx()
         detail_h = 5
         list_h = max(1, h - 3 - detail_h)
@@ -453,8 +470,15 @@ def run_ui(stdscr, sessions, query, project=None):
         gap = w - 1 - disp_width(head) - len(info)
         put(stdscr, 0, 0, head + " " * gap + info if gap >= 2 else head,
             curses.A_BOLD | (curses.color_pair(3) if filters else 0))
-        put(stdscr, 1, 0, line(["PROJECT", "SESSION", "DESCRIPTION", "CREATED", "UPDATED"]),
-            curses.color_pair(2) | curses.A_BOLD)
+        x = 0
+        for i, (name, n) in enumerate(zip(COLUMNS, cols)):
+            if i == sort_col:
+                name += " ▼" if sort_desc else " ▲"
+            attr = curses.color_pair(2) | curses.A_BOLD
+            if sorting and i == sort_col:
+                attr = curses.color_pair(1) | curses.A_BOLD
+            put(stdscr, 1, x, fit(name, n), attr)
+            x += n + 1
         for i, r in enumerate(rows[top:top + list_h]):
             live = "● " if r["agent"] and is_alive(r["agent"]) else ""
             cells = [f"{project_emoji(r['project'])} {r['project']}", live + (r["title"] or r["id"][:8]),
@@ -474,7 +498,7 @@ def run_ui(stdscr, sessions, query, project=None):
                 textwrap.wrap(f"Last:  {r['last']}", w - 1)[:2]
             for j, txt in enumerate(body[:detail_h - 1]):
                 put(stdscr, y + 2 + j, 0, txt, curses.A_DIM)
-        put(stdscr, h - 1, 0, msg or (HELP_SEARCH if searching else HELP),
+        put(stdscr, h - 1, 0, msg or (HELP_SORT if sorting else HELP_SEARCH if searching else HELP),
             curses.color_pair(3) if msg else curses.A_DIM)
         stdscr.refresh()
 
@@ -482,6 +506,19 @@ def run_ui(stdscr, sessions, query, project=None):
         try:
             k = stdscr.get_wch()
         except curses.error:
+            continue
+        if sorting:
+            if k == curses.KEY_LEFT:
+                sort_col = (sort_col - 1) % len(COLUMNS)
+            elif k == curses.KEY_RIGHT:
+                sort_col = (sort_col + 1) % len(COLUMNS)
+            elif k == curses.KEY_UP:
+                sort_desc = False
+            elif k == curses.KEY_DOWN:
+                sort_desc = True
+            elif k in ("\n", "\r", curses.KEY_ENTER, "\x1b", "s"):
+                sorting = False
+            sel = 0
             continue
         # navigation shared by both modes
         if k in (curses.KEY_UP, "\x10"):          # ↑ / Ctrl-P
@@ -519,6 +556,8 @@ def run_ui(stdscr, sessions, query, project=None):
             sel = len(rows) - 1
         elif k == "/":
             searching, saved_query = True, query
+        elif k == "s":
+            sorting, sel = True, 0
         elif k == "p":
             choice = pick_project(stdscr, base, project)
             if choice is not False:

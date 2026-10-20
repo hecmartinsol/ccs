@@ -46,6 +46,7 @@ ln -sf "$PWD/ccs.py" ~/.local/bin/ccs
 |---|---|
 | `↑↓` `j k` `PgUp PgDn` `g G` | move |
 | `/` | free-text search (Enter accepts, Esc cancels) |
+| `s` | sort: ←→ pick column, ↑ asc, ↓ desc, Enter/Esc done |
 | `p` | project picker: type to filter, ↑↓ + Enter, Esc clears/closes |
 | `x` | clear filters |
 | `Tab` | cycle local → crons (`sdk-cli`, `claude -p`) → background agents (`claude agents`; `●` = running, Enter attaches) |

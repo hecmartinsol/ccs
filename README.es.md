@@ -64,6 +64,7 @@ Teclas:
 |---|---|
 | `↑↓` `j k` `PgUp PgDn` `g G` | mover |
 | `/` | búsqueda de texto libre (Enter acepta, Esc cancela) |
+| `s` | ordenar: ←→ elegir columna, ↑ asc, ↓ desc, Enter/Esc terminar |
 | `p` | popup de proyectos: escribe para filtrar, ↑↓ + Enter, Esc limpia/cierra |
 | `x` | limpiar filtros |
 | `Tab` | rota local → crons (`sdk-cli`, `claude -p`) → agentes en segundo plano (`claude agents`; `●` = activo, Enter hace attach) |

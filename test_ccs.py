@@ -269,6 +269,27 @@ class ProjectFilterTest(unittest.TestCase):
         self.assertEqual(ccs.project_list(rows), [("cash", 1), ("shop", 2)])
 
 
+class SortRowsTest(unittest.TestCase):
+    R = [
+        {"id": "1", "project": "b", "title": "", "first": "z", "created": "2", "updated": "9"},
+        {"id": "2", "project": "A", "title": "Beta", "first": "y", "created": "3", "updated": "1"},
+        {"id": "3", "project": "c", "title": "alpha", "first": "x", "created": "1", "updated": "5"},
+    ]
+
+    def order(self, col, desc):
+        return [r["id"] for r in ccs.sort_rows(self.R, col, desc)]
+
+    def test_each_column(self):
+        self.assertEqual(self.order(0, False), ["2", "1", "3"])    # case-insensitive
+        self.assertEqual(self.order(1, False), ["1", "3", "2"])    # no title -> id ("1" < "alpha")
+        self.assertEqual(self.order(2, False), ["3", "2", "1"])
+        self.assertEqual(self.order(3, False), ["3", "1", "2"])
+        self.assertEqual(self.order(4, True), ["1", "3", "2"])
+
+    def test_desc_reverses(self):
+        self.assertEqual(self.order(3, True), ["2", "1", "3"])
+
+
 class ModeRowsTest(unittest.TestCase):
     S = [
         {"id": "a", "entrypoint": "cli", "agent": None},
