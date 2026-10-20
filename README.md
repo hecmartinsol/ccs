@@ -55,6 +55,7 @@ ln -sf "$PWD/ccs.py" ~/.local/bin/ccs
 | `R` | refresh now (the list also refreshes itself every 30 s; the header shows a `⟳` countdown) |
 | `x` | clear filters |
 | `Tab` | cycle local → crons (`sdk-cli`, `claude -p`) → background agents (`claude agents`; `●` = running, Enter attaches) |
+| `Space` | preview the conversation (last 100 messages; ↑↓ PgUp/PgDn g/G scroll, Space/Esc closes) |
 | `Ctrl-J` (`Ctrl-Enter` where the terminal sends it) | open the session in a new terminal window, leaving ccs open (`terminal` in the config, else auto-detected) |
 | `Ctrl-T` | open the session in a new tmux window (only inside tmux) |
 | `Enter` | `cd` to the folder + `claude --resume <id>` (sessions marked `●` are already running: refused, except agents, which are attached) |

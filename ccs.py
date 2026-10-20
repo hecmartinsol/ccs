@@ -45,8 +45,9 @@ CMD_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.S)
 
 # ---------------------------------------------------------------- parsing
 
-def _user_text(rec):
-    """Visible text of a real user message, or None if it is noise."""
+def _user_text(rec, full=False):
+    """Visible text of a real user message, or None if it is noise.
+    By default one collapsed, truncated line; `full` keeps the text as written."""
     if rec.get("isMeta") or rec.get("isSidechain"):
         return None
     content = (rec.get("message") or {}).get("content")
@@ -66,7 +67,41 @@ def _user_text(rec):
             return None
     elif text.startswith(NOISE_PREFIXES):
         return None
-    return " ".join(text.split())[:MAX_TEXT]
+    return text if full else " ".join(text.split())[:MAX_TEXT]
+
+
+def _assistant_text(rec):
+    """Text blocks of an assistant message (tool calls and thinking are left out), or None."""
+    if rec.get("isSidechain"):
+        return None
+    content = (rec.get("message") or {}).get("content")
+    if isinstance(content, str):
+        return content.strip() or None
+    if not isinstance(content, list):
+        return None
+    text = "\n".join(b.get("text", "") for b in content
+                     if isinstance(b, dict) and b.get("type") == "text").strip()
+    return text or None
+
+
+def read_preview(path, limit=100, max_chars=1500):
+    """Last `limit` visible messages of a session as [(role, text)], role = "user" | "claude"."""
+    msgs = []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            t = rec.get("type")
+            text = _user_text(rec, full=True) if t == "user" else _assistant_text(rec) if t == "assistant" else None
+            if text:
+                if len(text) > max_chars:
+                    text = text[:max_chars] + "…"
+                msgs.append(("user" if t == "user" else "claude", text))
+    return msgs[-limit:]
 
 
 def parse_session(path):
@@ -499,7 +534,7 @@ def fit(text, width):
     return text + " " * (width - disp_width(text))
 
 
-HELP = [("↑↓", "move"), ("Enter", "resume"), ("^T", "tmux"), ("^J", "window"), ("/", "search"),
+HELP = [("↑↓", "move"), ("Enter", "resume"), ("Space", "preview"), ("^T", "tmux"), ("^J", "window"), ("/", "search"),
         ("s", "sort"), ("p", "project"), ("r", "rename"), ("d", "trash"), ("*", "pin"),
         ("H", "hidden"), ("R", "refresh"), ("x", "clear"), ("Tab", "view"), ("q", "quit")]
 HELP_SORT = [("←→", "column"), ("↑", "asc"), ("↓", "desc"), ("Enter/Esc/s", "done")]
@@ -571,6 +606,63 @@ def put_help(win, y, pairs):
                            (" " + d, curses.A_DIM)):
             put(win, y, x, text, attr)
             x += disp_width(text)
+
+
+def preview_lines(msgs, width):
+    """Wrapped lines of a conversation: [(text, kind)], kind 0 = body, 1 = user header, 2 = claude header."""
+    out = []
+    for role, text in msgs:
+        out.append(("▌ You" if role == "user" else "▌ Claude", 1 if role == "user" else 2))
+        for para in text.splitlines() or [""]:
+            out.extend((ln, 0) for ln in (textwrap.wrap(para, max(10, width), replace_whitespace=False,
+                                                        drop_whitespace=True) or [""]))
+        out.append(("", 0))
+    return out
+
+
+def preview(stdscr, session):
+    """Scrollable popup with the last messages of a session. Space/Esc/q closes."""
+    try:
+        msgs = read_preview(session["path"])
+    except OSError as e:
+        return f"Cannot read session: {e.strerror or e}"
+    h, w = stdscr.getmaxyx()
+    ph, pw = max(5, h - 2), max(20, w - 4)
+    win = curses.newwin(ph, pw, (h - ph) // 2, (w - pw) // 2)
+    win.keypad(True)
+    lines = preview_lines(msgs, pw - 6)
+    vis = ph - 2
+    top = max(0, len(lines) - vis)                      # start at the latest messages
+    title = f" {session['title'] or session['id'][:8]} · {len(msgs)} messages "
+    while True:
+        win.erase()
+        win.box()
+        put(win, 0, 2, title, curses.A_BOLD)
+        for i, (text, kind) in enumerate(lines[top:top + vis]):
+            attr = (curses.color_pair(2) | curses.A_BOLD if kind == 1
+                    else curses.color_pair(3) | curses.A_BOLD if kind == 2 else curses.A_NORMAL)
+            put(win, 1 + i, 2 if kind else 4, text, attr)
+        if not msgs:
+            put(win, 1, 4, "(no messages)", curses.A_DIM)
+        pct = 100 if len(lines) <= vis else int(100 * (top + vis) / len(lines))
+        put(win, ph - 1, 2, f" ↑↓ PgUp/PgDn g/G scroll · Space/Esc close · {pct}% ", curses.A_DIM)
+        win.refresh()
+        k = win.get_wch()
+        if k in (curses.KEY_UP, "k", "\x10"):
+            top -= 1
+        elif k in (curses.KEY_DOWN, "j", "\x0e"):
+            top += 1
+        elif k in (curses.KEY_PPAGE, "b"):
+            top -= vis
+        elif k in (curses.KEY_NPAGE, "f"):
+            top += vis
+        elif k in (curses.KEY_HOME, "g"):
+            top = 0
+        elif k in (curses.KEY_END, "G"):
+            top = len(lines)
+        elif k in (" ", "q", "\x1b"):
+            return ""
+        top = max(0, min(top, max(0, len(lines) - vis)))
 
 
 def pick_project(stdscr, rows, current):
@@ -806,6 +898,9 @@ def run_ui(stdscr, sessions, query, project=None, reload=None):
             searching, saved_query = True, query
         elif k == "s":
             sorting, sel = True, 0
+        elif k == " ":
+            if rows:
+                msg = preview(stdscr, rows[sel])
         elif k == "*":
             if not rows:
                 continue

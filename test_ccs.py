@@ -407,6 +407,35 @@ class LaunchTest(unittest.TestCase):
             self.assertIn("Could not start nope", ccs.spawn(["claude"], "/w", "window", env={}))
 
 
+class PreviewTest(unittest.TestCase):
+    def test_read_preview_keeps_visible_text_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "s.jsonl")
+            asst = lambda content, **kw: {"type": "assistant", "message": {"content": content}, **kw}
+            write_jsonl(p, [
+                user("hola", "t1"),
+                asst([{"type": "thinking", "thinking": "hmm"}, {"type": "text", "text": "buenas"},
+                      {"type": "tool_use", "name": "Bash"}]),
+                asst([{"type": "tool_use", "name": "Bash"}]),                 # only a tool call
+                asst([{"type": "text", "text": "subagente"}], isSidechain=True),
+                user("<system-reminder>x</system-reminder>", "t2"),
+                user("y " * 2000, "t3"),
+            ])
+            with open(p, "a") as f:
+                f.write("no json\n")
+            msgs = ccs.read_preview(p)
+            self.assertEqual([r for r, _ in msgs], ["user", "claude", "user"])
+            self.assertEqual(msgs[1][1], "buenas")
+            self.assertTrue(msgs[2][1].endswith("…") and len(msgs[2][1]) <= 1501)
+            self.assertEqual(len(ccs.read_preview(p, limit=1)), 1)
+
+    def test_preview_lines_wrap_and_label(self):
+        lines = ccs.preview_lines([("user", "uno dos tres cuatro"), ("claude", "a\nb")], 10)
+        self.assertEqual([k for _, k in lines if k], [1, 2])
+        self.assertTrue(all(len(t) <= 10 for t, k in lines if not k))
+        self.assertIn(("b", 0), lines)
+
+
 class SortRowsTest(unittest.TestCase):
     R = [
         {"id": "1", "project": "b", "title": "", "first": "z", "created": "2", "updated": "9"},
