@@ -51,7 +51,7 @@ ln -sf "$PWD/ccs.py" ~/.local/bin/ccs
 | `d` | move the session to the trash (asks `y/N`; refuses running sessions). Restore by moving the file back from `~/.local/share/ccs/trash/` |
 | `*` | pin/unpin the session (★, stays on top; saved as `favorites` in the config) |
 | `Ctrl-H` | show/hide projects matched by `hidden` |
-| `c` | choose which columns to show (saved as `columns` in the config) |
+| `c` | columns menu: ↑↓ select, Space show/hide, `m` grab then ↑↓ move and Enter drop (Esc undoes); saved as `columns` / `column_order` in the config |
 | `p` | project picker: type to filter, ↑↓ + Enter, Esc clears/closes |
 | `Ctrl-R` | refresh now (the list also refreshes itself every 30 s; the header shows a `⟳` countdown) |
 | `x` | clear filters |

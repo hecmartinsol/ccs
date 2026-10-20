@@ -365,7 +365,22 @@ COLS = [
 COL = {c[0]: c for c in COLS}
 FLEX_WEIGHTS = {"project": 18, "session": 28, "first": 54}    # shares of the free width
 DEFAULT_COLUMNS = [c[0] for c in COLS if c[5]]
-VISIBLE = list(DEFAULT_COLUMNS)
+ORDER = [c[0] for c in COLS]            # every column, in display order (shown or not)
+VISIBLE = list(DEFAULT_COLUMNS)         # the shown ones, in display order
+
+
+def set_columns(order, shown):
+    """Set the column order and which of them are shown (at least one stays)."""
+    ORDER[:] = order
+    VISIBLE[:] = [k for k in order if k in shown] or list(DEFAULT_COLUMNS)
+
+
+def move_column(order, i, delta):
+    """Move order[i] by `delta` places. Returns (new order, its new index)."""
+    j = max(0, min(len(order) - 1, i + delta))
+    out = list(order)
+    out.insert(j, out.pop(i))
+    return out, j
 
 
 def column_widths(keys, total):
@@ -544,10 +559,13 @@ def apply_config(cfg):
     emojis: {project: emoji}.  rules: [[substring, emoji], ...] (before the built-in ones).
     hidden: project-name patterns (fnmatch) to leave out.  favorites: session ids pinned on top.
     terminal: command that runs the rest of its arguments, for Ctrl-J (e.g. "ghostty -e").
-    columns: visible column keys.  prices: {model: [input, output, cache read]} in $/MTok."""
+    columns: shown column keys.  column_order: all column keys in display order.  prices: {model: [input, output, cache read]} in $/MTok."""
     global WORKSPACES, EMOJIS, RULES, HIDDEN, FAVORITES, TERMINAL, USER_PRICES
     TERMINAL = shlex.split(cfg.get("terminal") or "")
-    VISIBLE[:] = [k for k in COL if k in cfg.get("columns", DEFAULT_COLUMNS)] or list(DEFAULT_COLUMNS)
+    shown = cfg.get("columns", DEFAULT_COLUMNS)
+    lead = cfg.get("column_order") or (cfg["columns"] if "columns" in cfg else [])   # no config: natural order
+    seen = [k for k in lead + shown if k in COL] if lead else []
+    set_columns(list(dict.fromkeys(seen + [c[0] for c in COLS])), set(shown))
     USER_PRICES = {m: tuple(p) for m, p in cfg.get("prices", {}).items()
                    if isinstance(p, (list, tuple)) and len(p) == 3}
     HIDDEN = [str(p).lower() for p in cfg.get("hidden", [])]
@@ -819,39 +837,64 @@ def preview(stdscr, session):
 
 
 def columns_menu(stdscr):
-    """Popup to show/hide table columns. Saved as `columns` in the config. Returns a status message."""
+    """Popup to show/hide and reorder table columns; saved in the config. Returns a status message.
+    ↑↓ select · Space show/hide · m grab, ↑↓ move, Enter drop (Esc undoes) · Esc close."""
     h, w = stdscr.getmaxyx()
-    ph, pw = min(h - 2, len(COLS) + 3), min(w - 4, 34)
+    ph, pw = min(h - 2, len(COLS) + 3), min(w - 4, 50)
     win = curses.newwin(ph, pw, (h - ph) // 2, (w - pw) // 2)
     win.keypad(True)
+    order, before = list(ORDER), None            # `before` = the order to restore while grabbing
     sel, top = 0, 0
+
+    def save(shown):
+        set_columns(order, shown)
+        try:
+            save_config({"columns": VISIBLE, "column_order": ORDER})
+        except (OSError, SystemExit) as e:
+            return f"Config not saved: {e}"
+        return ""
+
     while True:
         vis = ph - 3
         top = min(max(top, sel - vis + 1), sel)
         win.erase()
         win.box()
         put(win, 0, 2, " Columns ", curses.A_BOLD)
-        for i, (key, title, *_rest) in enumerate(COLS[top:top + vis]):
-            on = key in VISIBLE
-            attr = curses.color_pair(1) if top + i == sel else curses.A_NORMAL
-            put(win, 1 + i, 1, fit(f" [{'x' if on else ' '}] {title}", pw - 2), attr)
-        put(win, ph - 1, 2, " Space toggle · Esc close ", curses.A_DIM)
+        for i, key in enumerate(order[top:top + vis]):
+            grabbed = before is not None and top + i == sel
+            attr = curses.color_pair(3) | curses.A_BOLD | curses.A_REVERSE if grabbed \
+                else curses.color_pair(1) if top + i == sel else curses.A_NORMAL
+            put(win, 1 + i, 1, fit(f" {'≡' if grabbed else ' '}[{'x' if key in VISIBLE else ' '}] {COL[key][1]}", pw - 2), attr)
+        put(win, ph - 1, 2, " ↑↓ move · Enter drop · Esc undo " if before is not None
+            else " Space show · m move · Esc close ", curses.A_DIM)
         win.refresh()
         k = win.get_wch()
-        if k in (curses.KEY_UP, "k", "\x10"):
-            sel = max(0, sel - 1)
-        elif k in (curses.KEY_DOWN, "j", "\x0e"):
-            sel = min(len(COLS) - 1, sel + 1)
-        elif k in (" ", "\n", "\r", curses.KEY_ENTER):
-            key = COLS[sel][0]
-            new = [c[0] for c in COLS if (c[0] in VISIBLE) != (c[0] == key)]
-            if not new:
-                continue                            # keep at least one column
-            VISIBLE[:] = new
-            try:
-                save_config({"columns": new})
-            except (OSError, SystemExit) as e:
-                return f"Config not saved: {e}"
+        if k in (curses.KEY_UP, "\x10") or (k == "k" and before is None):
+            if before is None:
+                sel = max(0, sel - 1)
+            else:
+                order, sel = move_column(order, sel, -1)
+        elif k in (curses.KEY_DOWN, "\x0e") or (k == "j" and before is None):
+            if before is None:
+                sel = min(len(order) - 1, sel + 1)
+            else:
+                order, sel = move_column(order, sel, 1)
+        elif before is not None:
+            if k in ("\n", "\r", curses.KEY_ENTER):
+                before = None
+                msg = save(set(VISIBLE))
+                if msg:
+                    return msg
+            elif k == "\x1b":
+                order, before = before, None
+        elif k == "m":
+            before = list(order)
+        elif k == " ":
+            shown = set(VISIBLE) ^ {order[sel]}
+            if shown:                               # keep at least one column
+                msg = save(shown)
+                if msg:
+                    return msg
         elif k in ("\x1b", "q", "c"):
             return ""
 

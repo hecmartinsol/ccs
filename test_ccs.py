@@ -511,6 +511,24 @@ class UsageColumnsTest(unittest.TestCase):
         self.assertEqual(w[1:], [7, 10])                       # fixed widths never change
         self.assertEqual(sum(w) + 2, 100)                      # the lone flexible column takes the rest
 
+    def test_move_column(self):
+        self.assertEqual(ccs.move_column(list("abcd"), 1, 1), (list("acbd"), 2))
+        self.assertEqual(ccs.move_column(list("abcd"), 1, -1), (list("bacd"), 0))
+        self.assertEqual(ccs.move_column(list("abcd"), 0, -1), (list("abcd"), 0))     # clamped
+        self.assertEqual(ccs.move_column(list("abcd"), 3, 1), (list("abcd"), 3))
+
+    def test_column_order_config(self):
+        ccs.apply_config({"columns": ["cost", "session"], "column_order": ["updated", "cost", "bogus", "session"]})
+        self.assertEqual(ccs.VISIBLE, ["cost", "session"])                    # follows column_order
+        self.assertEqual(ccs.ORDER[:4], ["updated", "cost", "session", "project"])
+        self.assertEqual(sorted(ccs.ORDER), sorted(c[0] for c in ccs.COLS))
+        ccs.apply_config({})                                                  # nothing configured
+        self.assertEqual(ccs.ORDER, [c[0] for c in ccs.COLS])
+        self.assertEqual(ccs.VISIBLE, ccs.DEFAULT_COLUMNS)
+        ccs.apply_config({"columns": ["cost", "project"]})                    # no column_order: columns lead
+        self.assertEqual(ccs.VISIBLE, ["cost", "project"])
+        self.assertEqual(ccs.ORDER[:2], ["cost", "project"])
+
     def test_columns_config(self):
         ccs.apply_config({"columns": ["session", "cost", "bogus"]})
         self.assertEqual(ccs.VISIBLE, ["session", "cost"])
