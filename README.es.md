@@ -56,12 +56,15 @@ ln -sf "$PWD/ccs.py" ~/.local/bin/ccs
   "emojis": { "my-main-repo": "🟢", "side-project": "🪙" },
   "rules": [["shop", "🛒"]],
   "hidden": ["tmp", "scratch*"],
+  "terminal": "ghostty -e",
   "favorites": []
 }
 ```
 
 `hidden` acepta patrones de nombre de proyecto (comodines `*` y `?`, sin distinguir mayúsculas).
-`favorites` lo gestiona la tecla `*` (ids de sesión).
+`favorites` lo gestiona la tecla `*` (ids de sesión). `terminal` es el prefijo que usa `Ctrl-J` para lanzar `claude` en una ventana
+nueva (`"ghostty -e"`, `"gnome-terminal --"`…); sin él, ccs prueba `$TERM_PROGRAM`, `$TERMINAL` y los
+emuladores habituales.
 
 Teclas:
 
@@ -78,6 +81,8 @@ Teclas:
 | `R` | refrescar ya (la lista también se refresca sola cada 30 s; la cabecera muestra una cuenta atrás `⟳`) |
 | `x` | limpiar filtros |
 | `Tab` | rota local → crons (`sdk-cli`, `claude -p`) → agentes en segundo plano (`claude agents`; `●` = activo, Enter hace attach) |
+| `Ctrl-J` (`Ctrl-Enter` si la terminal lo envía) | abrir la sesión en una ventana de terminal nueva sin cerrar ccs (`terminal` en la config, si no se autodetecta) |
+| `Ctrl-T` | abrir la sesión en una ventana nueva de tmux (solo dentro de tmux) |
 | `Enter` | `cd` a la carpeta + `claude --resume <id>` (las marcadas con `●` ya están en marcha: se rechaza, salvo agentes, que hacen attach) |
 | `q` / `Esc` | salir |
 

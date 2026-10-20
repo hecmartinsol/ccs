@@ -12,6 +12,7 @@ import json
 import locale
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -266,6 +267,54 @@ def running(session, live_ids):
     return session["id"] in live_ids or bool(agent and is_alive(agent))
 
 
+TERMINALS = {  # emulator -> arguments that make it run the rest of the command line
+    "ghostty": ["-e"], "kitty": [], "alacritty": ["-e"], "wezterm": ["start", "--"],
+    "gnome-terminal": ["--"], "konsole": ["-e"], "xfce4-terminal": ["-x"], "xterm": ["-e"],
+    "x-terminal-emulator": ["-e"],
+}
+
+
+def session_command(session):
+    """argv that opens a session: attach if it is a running agent, else resume."""
+    agent = session.get("agent")
+    verb = ["attach"] if agent and is_alive(agent) else ["--resume"]
+    return ["claude", *verb, session["id"]]
+
+
+def terminal_prefix(env=None):
+    """Command prefix of a terminal emulator: config, then the one we run in, then any installed."""
+    env = os.environ if env is None else env
+    if TERMINAL:
+        return list(TERMINAL)
+    names = [env.get("TERM_PROGRAM", "").lower(), os.path.basename(env.get("TERMINAL", ""))]
+    for name in names + list(TERMINALS):
+        if name in TERMINALS and shutil.which(name):
+            return [name, *TERMINALS[name]]
+    return None
+
+
+def spawn(argv, cwd, where, env=None):
+    """Open `argv` in `cwd` in a new terminal window or tmux window, without leaving ccs.
+    Returns a status message."""
+    env = os.environ if env is None else env
+    if where == "tmux":
+        if not env.get("TMUX"):
+            return "Not inside tmux"
+        full = ["tmux", "new-window", "-c", cwd, *argv]
+    else:
+        prefix = terminal_prefix(env)
+        if not prefix:
+            return "No terminal found: set \"terminal\" in the config (e.g. \"ghostty -e\")"
+        # cd first: some emulators (gnome-terminal) ignore the working directory of the caller
+        full = [*prefix, "sh", "-c", 'cd "$0" && exec "$@"', cwd, *argv]
+    try:
+        subprocess.Popen(full, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as e:
+        return f"Could not start {full[0]}: {e.strerror or e}"
+    return f"Opened in {'tmux' if where == 'tmux' else os.path.basename(full[0])}"
+
+
 def trash_session(path, trash_dir=TRASH_DIR):
     """Move a session transcript (and its <id>/ side folder, if any) into the trash.
     Returns the new path of the transcript."""
@@ -305,6 +354,7 @@ EMOJI_POOL = ["🔵", "🟣", "🟠", "🟡", "🟤", "🔶", "🔷", "🍀", "�
 WORKSPACES = []
 HIDDEN = []
 FAVORITES = []
+TERMINAL = []                           # user's terminal command prefix, e.g. ["ghostty", "-e"]
 EMOJIS = dict(DEFAULT_EMOJIS)
 RULES = list(DEFAULT_RULES)
 
@@ -336,8 +386,10 @@ def save_config(updates, path=None):
 def apply_config(cfg):
     """workspaces: folders whose top-level children are projects.
     emojis: {project: emoji}.  rules: [[substring, emoji], ...] (before the built-in ones).
-    hidden: project-name patterns (fnmatch) to leave out.  favorites: session ids pinned on top."""
-    global WORKSPACES, EMOJIS, RULES, HIDDEN, FAVORITES
+    hidden: project-name patterns (fnmatch) to leave out.  favorites: session ids pinned on top.
+    terminal: command that runs the rest of its arguments, for Ctrl-J (e.g. "ghostty -e")."""
+    global WORKSPACES, EMOJIS, RULES, HIDDEN, FAVORITES, TERMINAL
+    TERMINAL = shlex.split(cfg.get("terminal") or "")
     HIDDEN = [str(p).lower() for p in cfg.get("hidden", [])]
     FAVORITES = [str(i) for i in cfg.get("favorites", [])]
     WORKSPACES = [os.path.expanduser(w).rstrip("/") for w in cfg.get("workspaces", [])]
@@ -447,10 +499,15 @@ def fit(text, width):
     return text + " " * (width - disp_width(text))
 
 
-HELP = ("↑↓ move · / search · s sort · p project · r rename · d trash · * pin · H hidden · "
-        "x clear · Tab view · Enter resume · q quit")
-HELP_SORT = "←→ column · ↑ asc · ↓ desc · Enter/Esc/s done"
-HELP_SEARCH = "type to filter · ↑↓ move · Enter accept · Esc cancel"
+HELP = [("↑↓", "move"), ("Enter", "resume"), ("^T", "tmux"), ("^J", "window"), ("/", "search"),
+        ("s", "sort"), ("p", "project"), ("r", "rename"), ("d", "trash"), ("*", "pin"),
+        ("H", "hidden"), ("R", "refresh"), ("x", "clear"), ("Tab", "view"), ("q", "quit")]
+HELP_SORT = [("←→", "column"), ("↑", "asc"), ("↓", "desc"), ("Enter/Esc/s", "done")]
+HELP_SEARCH = [("type", "to filter"), ("↑↓", "move"), ("Enter", "accept"), ("Esc", "cancel")]
+
+
+def help_text(pairs):
+    return " · ".join(f"{k} {d}" for k, d in pairs)
 
 
 def put(win, y, x, text, attr=0):
@@ -503,6 +560,17 @@ def confirm(stdscr, text):
             continue
         if k != curses.KEY_RESIZE:
             return k in ("y", "Y")
+
+
+def put_help(win, y, pairs):
+    """Key hints on one row: keys in the header colour, descriptions dimmed."""
+    x = 0
+    for i, (k, d) in enumerate(pairs):
+        for text, attr in ((" · " if i else "", curses.A_DIM),
+                           (k, curses.color_pair(2) | curses.A_BOLD),
+                           (" " + d, curses.A_DIM)):
+            put(win, y, x, text, attr)
+            x += disp_width(text)
 
 
 def pick_project(stdscr, rows, current):
@@ -585,6 +653,7 @@ def run_ui(stdscr, sessions, query, project=None, reload=None):
     """`reload` () -> new session list; when given, the list refreshes every REFRESH_SECS."""
     curses.curs_set(0)
     curses.use_default_colors()
+    curses.nonl()                       # Enter -> \r; Ctrl-J (Ctrl-Enter on some terminals) -> \n
     curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_CYAN)   # selection
     curses.init_pair(2, curses.COLOR_CYAN, -1)                   # header
     curses.init_pair(3, curses.COLOR_YELLOW, -1)                 # warning / filters
@@ -675,8 +744,10 @@ def run_ui(stdscr, sessions, query, project=None, reload=None):
                 textwrap.wrap(f"Last:  {r['last']}", w - 1)[:2]
             for j, txt in enumerate(body[:detail_h - 1]):
                 put(stdscr, y + 2 + j, 0, txt, curses.A_DIM)
-        put(stdscr, h - 1, 0, msg or (HELP_SORT if sorting else HELP_SEARCH if searching else HELP),
-            curses.color_pair(3) if msg else curses.A_DIM)
+        if msg:
+            put(stdscr, h - 1, 0, msg, curses.color_pair(3))
+        else:
+            put_help(stdscr, h - 1, HELP_SORT if sorting else HELP_SEARCH if searching else HELP)
         stdscr.refresh()
 
         msg = ""
@@ -784,7 +855,7 @@ def run_ui(stdscr, sessions, query, project=None, reload=None):
             mode, sel = (mode + 1) % len(MODES), 0
         elif k in ("q", "\x1b"):
             return None
-        elif k in ("\n", "\r", curses.KEY_ENTER):
+        elif k in ("\n", "\r", curses.KEY_ENTER, "\x14"):
             if not rows:
                 continue
             r = rows[sel]
@@ -794,7 +865,9 @@ def run_ui(stdscr, sessions, query, project=None, reload=None):
             if not os.path.isdir(r["cwd"]):
                 msg = f"Folder {r['cwd']} no longer exists"
                 continue
-            return r
+            if k in ("\r", curses.KEY_ENTER):
+                return r
+            msg = spawn(session_command(r), r["cwd"], "tmux" if k == "\x14" else "window")
 
 
 def main(argv):
@@ -806,7 +879,7 @@ def main(argv):
               "  .|path         start filtered by that folder's project\n"
               "  text           start with that search filter\n"
               "  -V, --version  show version\n\n"
-              f"config: {CONFIG_FILE}\n\n" + HELP)
+              f"config: {CONFIG_FILE}\n\n" + help_text(HELP))
         return 0
     locale.setlocale(locale.LC_ALL, "")
     apply_config(load_config())
@@ -825,9 +898,7 @@ def main(argv):
     chosen = curses.wrapper(run_ui, sessions, query, project, reload_all)
     if not chosen:
         return 0
-    cmd = ["claude", "--resume", chosen["id"]]
-    if chosen["agent"] and is_alive(chosen["agent"]):
-        cmd = ["claude", "attach", chosen["id"]]
+    cmd = session_command(chosen)
     print(f"→ {short_path(chosen['cwd'])}  ·  {' '.join(cmd)}")
     os.chdir(chosen["cwd"])
     os.execvp("claude", cmd)

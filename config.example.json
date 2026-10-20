@@ -16,5 +16,6 @@
   "hidden": [
     "tmp",
     "scratch*"
-  ]
+  ],
+  "terminal": "ghostty -e"
 }

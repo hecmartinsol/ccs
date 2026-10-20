@@ -55,6 +55,8 @@ ln -sf "$PWD/ccs.py" ~/.local/bin/ccs
 | `R` | refresh now (the list also refreshes itself every 30 s; the header shows a `⟳` countdown) |
 | `x` | clear filters |
 | `Tab` | cycle local → crons (`sdk-cli`, `claude -p`) → background agents (`claude agents`; `●` = running, Enter attaches) |
+| `Ctrl-J` (`Ctrl-Enter` where the terminal sends it) | open the session in a new terminal window, leaving ccs open (`terminal` in the config, else auto-detected) |
+| `Ctrl-T` | open the session in a new tmux window (only inside tmux) |
 | `Enter` | `cd` to the folder + `claude --resume <id>` (sessions marked `●` are already running: refused, except agents, which are attached) |
 | `q` / `Esc` | quit |
 
@@ -78,12 +80,15 @@ rules (`voice` → 🎤, `doc` → 📁, `api` → 🔌…); otherwise one from 
   "emojis": { "my-main-repo": "🟢", "side-project": "🪙" },
   "rules": [["shop", "🛒"]],
   "hidden": ["tmp", "scratch*"],
+  "terminal": "ghostty -e",
   "favorites": []
 }
 ```
 
 `hidden` takes project-name patterns (`*` and `?` wildcards, case-insensitive). `favorites` is managed
-by the `*` key (session ids).
+by the `*` key (session ids). `terminal` is the command prefix used by `Ctrl-J` to run `claude`
+in a new window (`"ghostty -e"`, `"gnome-terminal --"`…); without it ccs tries `$TERM_PROGRAM`, `$TERMINAL`
+and the common emulators.
 
 ## How it works
 

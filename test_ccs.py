@@ -367,6 +367,46 @@ class ReloadTest(unittest.TestCase):
             self.assertEqual(ccs.reload_all(), ["ok"])
 
 
+class LaunchTest(unittest.TestCase):
+    def tearDown(self):
+        ccs.apply_config({})
+
+    def test_session_command(self):
+        self.assertEqual(ccs.session_command({"id": "a", "agent": None}), ["claude", "--resume", "a"])
+        live = {"id": "b", "agent": {"pid": os.getpid()}}
+        self.assertEqual(ccs.session_command(live), ["claude", "attach", "b"])
+
+    def test_terminal_prefix_order(self):
+        with mock.patch.object(ccs.shutil, "which", side_effect=lambda n: "/bin/" + n if n in ("kitty", "xterm") else None):
+            self.assertEqual(ccs.terminal_prefix({}), ["kitty"])
+            self.assertEqual(ccs.terminal_prefix({"TERMINAL": "/usr/bin/xterm"}), ["xterm", "-e"])
+            self.assertEqual(ccs.terminal_prefix({"TERM_PROGRAM": "kitty"}), ["kitty"])
+            ccs.apply_config({"terminal": "foot -e"})
+            self.assertEqual(ccs.terminal_prefix({}), ["foot", "-e"])
+        with mock.patch.object(ccs.shutil, "which", return_value=None):
+            ccs.apply_config({})
+            self.assertIsNone(ccs.terminal_prefix({}))
+
+    def test_spawn_window_and_tmux(self):
+        ccs.apply_config({"terminal": "term -e"})
+        with mock.patch.object(ccs.subprocess, "Popen") as popen:
+            msg = ccs.spawn(["claude", "--resume", "a"], "/w", "window", env={})
+            full = popen.call_args[0][0]
+            self.assertEqual(full[:2], ["term", "-e"])
+            self.assertEqual(full[-4:], ["/w", "claude", "--resume", "a"])
+            self.assertEqual(popen.call_args[1]["cwd"], "/w")
+            self.assertIn("term", msg)
+            self.assertEqual(ccs.spawn(["claude"], "/w", "tmux", env={}), "Not inside tmux")
+            ccs.spawn(["claude", "x"], "/w", "tmux", env={"TMUX": "1"})
+            self.assertEqual(popen.call_args[0][0],
+                             ["tmux", "new-window", "-c", "/w", "claude", "x"])
+
+    def test_spawn_reports_missing_binary(self):
+        ccs.apply_config({"terminal": "nope -e"})
+        with mock.patch.object(ccs.subprocess, "Popen", side_effect=FileNotFoundError(2, "No such file")):
+            self.assertIn("Could not start nope", ccs.spawn(["claude"], "/w", "window", env={}))
+
+
 class SortRowsTest(unittest.TestCase):
     R = [
         {"id": "1", "project": "b", "title": "", "first": "z", "created": "2", "updated": "9"},
