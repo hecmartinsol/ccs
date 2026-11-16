@@ -372,9 +372,19 @@ class LaunchTest(unittest.TestCase):
         ccs.apply_config({})
 
     def test_session_command(self):
-        self.assertEqual(ccs.session_command({"id": "a", "agent": None}), ["claude", "--resume", "a"])
+        self.assertEqual(ccs.session_command({"id": "a", "agent": None}),
+                         ["claude", "--permission-mode", "bypassPermissions", "--resume", "a"])
         live = {"id": "b", "agent": {"pid": os.getpid()}}
         self.assertEqual(ccs.session_command(live), ["claude", "attach", "b"])
+
+    def test_permission_mode(self):
+        ccs.apply_config({"permission_mode": "plan"})
+        self.assertEqual(ccs.session_command({"id": "a", "agent": None})[1:3], ["--permission-mode", "plan"])
+        ccs.apply_config({"permission_mode": "default"})
+        self.assertEqual(ccs.session_command({"id": "a", "agent": None}), ["claude", "--resume", "a"])
+        ccs.apply_config({"permission_mode": "bogus"})
+        self.assertEqual(ccs.PERMISSION_MODE, "bypassPermissions")
+        self.assertEqual(ccs.next_permission_mode("default"), "bypassPermissions")
 
     def test_terminal_prefix_order(self):
         with mock.patch.object(ccs.shutil, "which", side_effect=lambda n: "/bin/" + n if n in ("kitty", "xterm") else None):

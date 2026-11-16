@@ -452,11 +452,21 @@ TERMINALS = {  # emulator -> arguments that make it run the rest of the command 
 }
 
 
+PERMISSION_MODES = ["bypassPermissions", "acceptEdits", "auto", "plan", "default"]
+PERMISSION_MODE = PERMISSION_MODES[0]      # mode sessions are resumed in; "default" = claude's own
+
+
+def next_permission_mode(mode):
+    return PERMISSION_MODES[(PERMISSION_MODES.index(mode) + 1) % len(PERMISSION_MODES)]
+
+
 def session_command(session):
-    """argv that opens a session: attach if it is a running agent, else resume."""
+    """argv that opens a session: attach if it is a running agent, else resume in PERMISSION_MODE."""
     agent = session.get("agent")
-    verb = ["attach"] if agent and is_alive(agent) else ["--resume"]
-    return ["claude", *verb, session["id"]]
+    if agent and is_alive(agent):
+        return ["claude", "attach", session["id"]]
+    flags = [] if PERMISSION_MODE == "default" else ["--permission-mode", PERMISSION_MODE]
+    return ["claude", *flags, "--resume", session["id"]]
 
 
 def terminal_prefix(env=None):
@@ -559,8 +569,11 @@ def apply_config(cfg):
     emojis: {project: emoji}.  rules: [[substring, emoji], ...] (before the built-in ones).
     hidden: project-name patterns (fnmatch) to leave out.  favorites: session ids pinned on top.
     terminal: command that runs the rest of its arguments, for Ctrl-J (e.g. "ghostty -e").
+    permission_mode: claude --permission-mode used on resume (default bypassPermissions; "default" = none).
     columns: shown column keys.  column_order: all column keys in display order.  prices: {model: [input, output, cache read]} in $/MTok."""
-    global WORKSPACES, EMOJIS, RULES, HIDDEN, FAVORITES, TERMINAL, USER_PRICES
+    global WORKSPACES, EMOJIS, RULES, HIDDEN, FAVORITES, TERMINAL, USER_PRICES, PERMISSION_MODE
+    mode = cfg.get("permission_mode")
+    PERMISSION_MODE = mode if mode in PERMISSION_MODES else PERMISSION_MODES[0]
     TERMINAL = shlex.split(cfg.get("terminal") or "")
     shown = cfg.get("columns", DEFAULT_COLUMNS)
     lead = cfg.get("column_order") or (cfg["columns"] if "columns" in cfg else [])   # no config: natural order
@@ -678,7 +691,7 @@ def fit(text, width):
 
 
 HELP = [("↑↓", "move"), ("Enter", "resume"), ("Space", "preview"), ("^J", "window"), ("/", "search"),
-        ("s", "sort"), ("c", "columns"), ("p", "project"), ("r", "rename"), ("d", "trash"), ("*", "pin"),
+        ("s", "sort"), ("c", "columns"), ("m", "mode"), ("p", "project"), ("r", "rename"), ("d", "trash"), ("*", "pin"),
         ("^H", "hidden"), ("^R", "refresh"), ("x", "clear"), ("Tab", "view"), ("q", "quit")]
 HELP_SORT = [("←→", "column"), ("↑", "asc"), ("↓", "desc"), ("Enter/Esc/s", "done")]
 HELP_SEARCH = [("type", "to filter"), ("↑↓", "move"), ("Enter", "accept"), ("Esc", "cancel")]
@@ -981,6 +994,7 @@ def reload_all(progress=None):
 
 def run_ui(stdscr, sessions, query, project=None, reload=None):
     """`reload` () -> new session list; when given, the list refreshes every REFRESH_SECS."""
+    global PERMISSION_MODE
     curses.curs_set(0)
     curses.use_default_colors()
     curses.nonl()                       # Enter -> \r; Ctrl-J (Ctrl-Enter on some terminals) -> \n
@@ -1036,7 +1050,7 @@ def run_ui(stdscr, sessions, query, project=None, reload=None):
         if show_hidden and HIDDEN:
             filters.append("+hidden")
         head = "  ".join(filters) or "ccs"
-        info = f"{len(rows)}/{len(base)} {MODES[mode]}"
+        info = f"{len(rows)}/{len(base)} {MODES[mode]}  ⚙ {PERMISSION_MODE}"
         if reload:
             info += f"  ⟳ {max(0, int(next_refresh - time.monotonic() + 0.99))}s"
         gap = w - 1 - disp_width(head) - len(info)
@@ -1139,6 +1153,13 @@ def run_ui(stdscr, sessions, query, project=None, reload=None):
             sorting, sel = True, 0
         elif k == "c":
             msg = columns_menu(stdscr)
+        elif k == "m":
+            PERMISSION_MODE = next_permission_mode(PERMISSION_MODE)
+            try:
+                save_config({"permission_mode": PERMISSION_MODE})
+                msg = f"Resume mode: {PERMISSION_MODE}"
+            except (OSError, SystemExit) as e:
+                msg = f"Mode {PERMISSION_MODE} (not saved: {e})"
         elif k == " ":
             if rows:
                 msg = preview(stdscr, rows[sel])

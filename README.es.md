@@ -78,6 +78,7 @@ Teclas:
 | `*` | fijar/desfijar la sesión (★, queda arriba; se guarda como `favorites` en la config) |
 | `Ctrl-H` | mostrar/ocultar los proyectos de `hidden` |
 | `c` | menú de columnas: ↑↓ elegir, Space mostrar/ocultar, `m` agarrar, ↑↓ mover y Enter soltar (Esc deshace); se guarda como `columns` / `column_order` en la config |
+| `m` | rotar el modo de permisos con el que se restauran las sesiones (`bypassPermissions` → `acceptEdits` → `auto` → `plan` → `default`); se ve como `⚙` en la cabecera y se guarda como `permission_mode` en la config. Por defecto `bypassPermissions`; `default` no pasa flag |
 | `p` | popup de proyectos: escribe para filtrar, ↑↓ + Enter, Esc limpia/cierra |
 | `Ctrl-R` | refrescar ya (la lista también se refresca sola cada 30 s; la cabecera muestra una cuenta atrás `⟳`) |
 | `x` | limpiar filtros |
