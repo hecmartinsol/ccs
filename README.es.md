@@ -71,7 +71,7 @@ Teclas:
 | Tecla | Acción |
 |---|---|
 | `↑↓` `j k` `PgUp PgDn` `g G` | mover |
-| `/` | búsqueda de texto libre (Enter acepta, Esc cancela) |
+| `/` | búsqueda de texto libre (Enter acepta, Esc cancela). Empezando por `?` (p. ej. `/?FLOW-2961`) busca dentro de las conversaciones — tus prompts y las respuestas de Claude, no el ruido de hooks/sistema. La primera búsqueda con `?` indexa todo (unos segundos, caché en `~/.cache/ccs/texts.json`); las siguientes son instantáneas |
 | `s` | ordenar: ←→ elegir columna, ↑ asc, ↓ desc, Enter/Esc terminar |
 | `r` | renombrar la sesión (escribe el mismo título que `/rename`) |
 | `d` | mover la sesión a la papelera (pide `y/N`; rechaza sesiones en curso). Restaurar: devolver el fichero desde `~/.local/share/ccs/trash/` |

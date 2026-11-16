@@ -45,7 +45,7 @@ ln -sf "$PWD/ccs.py" ~/.local/bin/ccs
 | Key | Action |
 |---|---|
 | `↑↓` `j k` `PgUp PgDn` `g G` | move |
-| `/` | free-text search (Enter accepts, Esc cancels) |
+| `/` | free-text search (Enter accepts, Esc cancels). Start with `?` (e.g. `/?FLOW-2961`) to search inside the conversations — your prompts and Claude's replies, not hook/system noise. The first `?` search indexes everything (a few seconds, cached in `~/.cache/ccs/texts.json`); later ones are instant |
 | `s` | sort: ←→ pick column, ↑ asc, ↓ desc, Enter/Esc done |
 | `r` | rename the session (writes the same title as `/rename`) |
 | `d` | move the session to the trash (asks `y/N`; refuses running sessions). Restore by moving the file back from `~/.local/share/ccs/trash/` |

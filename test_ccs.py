@@ -627,3 +627,57 @@ class CliTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ContentSearchTest(unittest.TestCase):
+    def _session(self, d, name, records):
+        p = os.path.join(d, name + ".jsonl")
+        write_jsonl(p, records)
+        return p
+
+    def test_session_text_keeps_user_and_claude_but_not_noise(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._session(d, "s", [
+                user("mira FLOW-2961 porfa", "2026-10-01T09:00:00Z"),
+                user("<system-reminder>FLOW-9999 del hook</system-reminder>", "2026-10-01T09:00:01Z"),
+                {"type": "assistant", "timestamp": "2026-10-01T09:00:02Z",
+                 "message": {"content": [{"type": "text", "text": "Hecho en PaymentService"},
+                                         {"type": "tool_use", "name": "Bash", "input": {"cmd": "TOOLONLY"}}]}},
+            ])
+            text = ccs.session_text(p)
+            self.assertIn("flow-2961", text)
+            self.assertIn("paymentservice", text)
+            self.assertNotIn("flow-9999", text)
+            self.assertNotIn("toolonly", text)
+
+    def test_question_mark_query_searches_content_not_metadata(self):
+        rows = [{"title": "Pagos", "first": "", "last": "", "cwd": "/w", "id": "a", "path": "/a"},
+                {"title": "FLOW-2961 en título", "first": "", "last": "", "cwd": "/w", "id": "b", "path": "/b"}]
+        texts = {"/a": "hablamos de flow-2961 y reservas", "/b": "nada"}
+        self.assertEqual([r["id"] for r in ccs.filter_rows(rows, "?FLOW-2961", texts=texts)], ["a"])
+        self.assertEqual([r["id"] for r in ccs.filter_rows(rows, "?flow-2961 reservas", texts=texts)], ["a"])
+        self.assertEqual(len(ccs.filter_rows(rows, "?", texts=texts)), 2)
+        self.assertEqual([r["id"] for r in ccs.filter_rows(rows, "FLOW-2961", texts=texts)], ["b"])
+
+    def test_is_content_query(self):
+        self.assertTrue(ccs.is_content_query("?x"))
+        self.assertFalse(ccs.is_content_query("x?"))
+
+    def test_load_texts_caches_and_only_rereads_changed(self):
+        with tempfile.TemporaryDirectory() as d:
+            p1 = self._session(d, "s1", [user("uno", "2026-10-01T09:00:00Z")])
+            p2 = self._session(d, "s2", [user("dos", "2026-10-01T09:00:00Z")])
+            cache = os.path.join(d, "texts.json")
+            self.assertEqual(ccs.load_texts([p1, p2], cache), {p1: "uno", p2: "dos"})
+            calls = []
+            orig = ccs.session_text
+            with mock.patch.object(ccs, "session_text", side_effect=lambda p: calls.append(p) or orig(p)):
+                ccs.load_texts([p1, p2], cache)
+                self.assertEqual(calls, [])
+                write_jsonl(p2, [user("dos", "2026-10-01T09:00:00Z"), user("tres", "2026-10-01T10:00:00Z")])
+                texts = ccs.load_texts([p1], cache)       # gone files drop out
+                self.assertEqual(calls, [])
+                self.assertEqual(texts, {p1: "uno"})
+                texts = ccs.load_texts([p1, p2], cache)
+                self.assertEqual(calls, [p2])
+                self.assertIn("tres", texts[p2])

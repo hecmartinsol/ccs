@@ -32,7 +32,10 @@ SESSIONS_DIR = os.path.expanduser("~/.claude/sessions")
 TRASH_DIR = os.path.join(
     os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")), "ccs", "trash"
 )
+TEXT_CACHE_FILE = os.path.join(os.path.dirname(CACHE_FILE), "texts.json")
 CACHE_VERSION = 4
+TEXT_CACHE_VERSION = 1
+CONTENT_PREFIX = "?"                    # a search starting with it looks inside the conversations
 REFRESH_SECS = 30
 MAX_TEXT = 300
 
@@ -102,6 +105,55 @@ def read_preview(path, limit=100, max_chars=1500):
                     text = text[:max_chars] + "…"
                 msgs.append(("user" if t == "user" else "claude", text))
     return msgs[-limit:]
+
+
+def session_text(path):
+    """Lowercased visible text of a session (user prompts + Claude's replies), for content search."""
+    parts = []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            t = rec.get("type")
+            text = _user_text(rec, full=True) if t == "user" else _assistant_text(rec) if t == "assistant" else None
+            if text:
+                parts.append(text)
+    return "\n".join(parts).lower()
+
+
+def load_texts(paths, cache_file=TEXT_CACHE_FILE, progress=None):
+    """{path: session_text} for `paths`, re-reading only new or modified files."""
+    try:
+        with open(cache_file) as f:
+            cache = json.load(f)
+        if cache.get("v") != TEXT_CACHE_VERSION:
+            raise ValueError
+    except (OSError, ValueError):
+        cache = {"v": TEXT_CACHE_VERSION, "files": {}}
+    old, new, changed = cache["files"], {}, False
+    for i, path in enumerate(paths):
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        entry = old.get(path)
+        if not (entry and entry["m"] == st.st_mtime and entry["s"] == st.st_size):
+            if progress:
+                progress(i + 1, len(paths))
+            entry = {"m": st.st_mtime, "s": st.st_size, "t": session_text(path)}
+            changed = True
+        new[path] = entry
+    if changed or len(new) != len(old):
+        os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+        tmp = cache_file + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"v": TEXT_CACHE_VERSION, "files": new}, f)
+        os.replace(tmp, cache_file)
+    return {p: e["t"] for p, e in new.items()}
 
 
 def parse_session(path):
@@ -215,14 +267,23 @@ def load_sessions(projects_dir=PROJECTS_DIR, cache_file=CACHE_FILE, progress=Non
     return sessions
 
 
-def filter_rows(rows, query, project=None):
-    terms = query.lower().split()
+def is_content_query(query):
+    return query.startswith(CONTENT_PREFIX)
+
+
+def filter_rows(rows, query, project=None, texts=None):
+    """`?terms` matches the conversation text (`texts`: {path: session_text}); else the metadata."""
+    content = is_content_query(query)
+    terms = (query[len(CONTENT_PREFIX):] if content else query).lower().split()
     out = []
     for r in rows:
         if project and r.get("project") != project:
             continue
-        hay = " ".join((r["title"], r["first"], r["last"], r["cwd"], r["id"],
-                        r.get("branch", ""), r.get("model", ""))).lower()
+        if content:
+            hay = (texts or {}).get(r.get("path"), "")
+        else:
+            hay = " ".join((r["title"], r["first"], r["last"], r["cwd"], r["id"],
+                            r.get("branch", ""), r.get("model", ""))).lower()
         if all(t in hay for t in terms):
             out.append(r)
     return out
@@ -694,7 +755,7 @@ HELP = [("↑↓", "move"), ("Enter", "resume"), ("Space", "preview"), ("^J", "w
         ("s", "sort"), ("c", "columns"), ("m", "mode"), ("p", "project"), ("r", "rename"), ("d", "trash"), ("*", "pin"),
         ("^H", "hidden"), ("^R", "refresh"), ("x", "clear"), ("Tab", "view"), ("q", "quit")]
 HELP_SORT = [("←→", "column"), ("↑", "asc"), ("↓", "desc"), ("Enter/Esc/s", "done")]
-HELP_SEARCH = [("type", "to filter"), ("↑↓", "move"), ("Enter", "accept"), ("Esc", "cancel")]
+HELP_SEARCH = [("type", "to filter"), ("?text", "in conversations"), ("↑↓", "move"), ("Enter", "accept"), ("Esc", "cancel")]
 
 
 def help_text(pairs):
@@ -1008,6 +1069,7 @@ def run_ui(stdscr, sessions, query, project=None, reload=None):
     follow = None                       # session id the selection should stick to
     sort_col, sort_desc = "updated", True   # newest first
     saved_query = ""
+    texts = None                        # {path: conversation text}, loaded on the first `?` search
     sel = top = 0
     msg = ""
     cur_id = None
@@ -1017,11 +1079,18 @@ def run_ui(stdscr, sessions, query, project=None, reload=None):
     while True:
         if reload and time.monotonic() >= next_refresh:
             sessions[:] = reload()
+            texts = None
             follow = cur_id
             next_refresh = time.monotonic() + REFRESH_SECS
         base = [s for s in mode_rows(sessions, MODES[mode])
                 if show_hidden or not is_hidden(s["project"])]
-        rows = pin_favorites(sort_rows(filter_rows(base, query, project), sort_col, sort_desc))
+        if texts is None and is_content_query(query):
+            def progress(i, n):
+                put(stdscr, 0, 0, f"indexing conversations… {i}/{n}".ljust(stdscr.getmaxyx()[1] - 1),
+                    curses.A_BOLD | curses.color_pair(3))
+                stdscr.refresh()
+            texts = load_texts([s["path"] for s in sessions], progress=progress)
+        rows = pin_favorites(sort_rows(filter_rows(base, query, project, texts), sort_col, sort_desc))
         live_ids = live_session_ids()
         if follow:
             sel = next((i for i, r in enumerate(rows) if r["id"] == follow), sel)
